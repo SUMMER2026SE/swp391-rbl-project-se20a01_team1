@@ -1,16 +1,20 @@
 services:
   postgres:
-    image: postgres:16
-    container_name: smart-rental_postgres
-    restart: always
-    environment:
-      POSTGRES_DB: smart-rental_platform
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+    image: postgres:16-alpine
+    container_name: amp-postgres
     ports:
       - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smart-rental_platform
     volumes:
-      - rental_pg_data:/var/lib/postgresql/data
+      - amp_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smart-rental_platform"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
 
 volumes:
-  rental_pg_data:
+  amp_pg_data:

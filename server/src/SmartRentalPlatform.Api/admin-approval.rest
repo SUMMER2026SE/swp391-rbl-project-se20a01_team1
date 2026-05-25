@@ -1,0 +1,66 @@
+### Admin KYC APIs
+
+### 1. Get Pending KYCs
+GET {{baseUrl}}/api/admin/kyc/pending?pageNumber=1&pageSize=10
+Authorization: Bearer {{adminToken}}
+
+### 2. Get KYC Detail
+GET {{baseUrl}}/api/admin/kyc/{{kycId}}
+Authorization: Bearer {{adminToken}}
+
+### 3. Approve KYC
+POST {{baseUrl}}/api/admin/kyc/{{kycId}}/approve
+Authorization: Bearer {{adminToken}}
+
+### 4. Reject KYC
+POST {{baseUrl}}/api/admin/kyc/{{kycId}}/reject
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  \"rejectedReason\": \"Ảnh giấy tờ bị mờ, vui lòng gửi lại\"
+}
+
+---
+
+### Admin Rooming House APIs
+
+### 5. Get Pending Rooming Houses
+GET {{baseUrl}}/api/admin/rooming-houses/pending?pageNumber=1&pageSize=10
+Authorization: Bearer {{adminToken}}
+
+### 6. Get Rooming House Detail
+GET {{baseUrl}}/api/admin/rooming-houses/{{roomingHouseId}}
+Authorization: Bearer {{adminToken}}
+
+### 7. Approve Rooming House
+POST {{baseUrl}}/api/admin/rooming-houses/{{roomingHouseId}}/approve
+Authorization: Bearer {{adminToken}}
+
+### 8. Reject Rooming House
+POST {{baseUrl}}/api/admin/rooming-houses/{{roomingHouseId}}/reject
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  \"rejectedReason\": \"Thông tin khu trọ không đầy đủ, vui lòng bổ sung\"
+}
+
+---
+
+### Public Listing APIs (No Authentication Required)
+
+### 9. Get Public Rooming Houses (List)
+GET {{baseUrl}}/api/public/rooming-houses?pageNumber=1&pageSize=10&searchKeyword=&minPrice=&maxPrice=
+
+### 10. Get Public Rooming House Detail
+GET {{baseUrl}}/api/public/rooming-houses/{{roomingHouseId}}
+
+---
+
+### Variables
+
+@baseUrl = http://localhost:5000
+@adminToken = your_admin_jwt_token_here
+@kycId = 00000000-0000-0000-0000-000000000001
+@roomingHouseId = 00000000-0000-0000-0000-000000000002

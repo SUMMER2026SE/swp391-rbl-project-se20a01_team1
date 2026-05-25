@@ -1,13 +1,19 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+namespace SmartRentalPlatform.Domain.Enums;
 
-namespace SmartRentalPlatform.Domain.Enums
+/// <summary>
+/// Trạng thái phê duyệt khu trọ
+/// </summary>
+public enum RoomingHouseApprovalStatus
 {
-    public enum RoomingHouseApprovalStatus
-    {
-        Pending = 1,
-        Approved = 2,
-        Rejected = 3
-    }
+    /// <summary>Chờ duyệt từ Admin</summary>
+    PendingAdminReview = 0,
+    
+    /// <summary>Đã được Admin duyệt</summary>
+    Approved = 1,
+    
+    /// <summary>Bị Admin từ chối</summary>
+    Rejected = 2,
+    
+    /// <summary>Chưa được đăng ký duyệt</summary>
+    Draft = 3
 }

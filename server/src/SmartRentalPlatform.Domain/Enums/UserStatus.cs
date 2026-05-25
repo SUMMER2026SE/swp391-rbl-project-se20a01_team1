@@ -4,6 +4,5 @@ public enum UserStatus
 {
     Active = 1,
     Locked = 2,
-    Banned = 3,
-    Deleted = 4
+    Banned = 3
 }

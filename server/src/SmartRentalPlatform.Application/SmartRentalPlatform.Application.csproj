@@ -3,11 +3,13 @@
   <ItemGroup>
     <ProjectReference Include="..\SmartRentalPlatform.Domain\SmartRentalPlatform.Domain.csproj" />
     <ProjectReference Include="..\SmartRentalPlatform.Contracts\SmartRentalPlatform.Contracts.csproj" />
+    <ProjectReference Include="..\SmartRentalPlatform.Infrastructure\SmartRentalPlatform.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.8" />
   </ItemGroup>
 
   <PropertyGroup>

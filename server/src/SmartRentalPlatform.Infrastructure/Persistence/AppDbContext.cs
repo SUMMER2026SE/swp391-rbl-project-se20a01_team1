@@ -1,50 +1,41 @@
 using Microsoft.EntityFrameworkCore;
-using SmartRentalPlatform.Application.Common.Interfaces;
-using SmartRentalPlatform.Domain.Entities.Administrative;
-using SmartRentalPlatform.Domain.Entities.Properties;
-using SmartRentalPlatform.Domain.Entities.Users;
+using SmartRentalPlatform.Domain.Entities;
+using SmartRentalPlatform.Domain.Entities.AdminApproval;
+using SmartRentalPlatform.Infrastructure.Persistence.Seed;
 
 
 namespace SmartRentalPlatform.Infrastructure.Persistence;
 
-public class AppDbContext : DbContext, IAppDbContext
+public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
     {
     }
-    // Users
+    
+    // Người 1 - Authentication
     public DbSet<User> Users => Set<User>();
-    public DbSet<Role> Roles => Set<Role>();
+    public DbSet<Role> Role => Set<Role>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
-    public DbSet<ExternalLogin> ExternalLogins => Set<ExternalLogin>();
-    public DbSet<UserToken> UserTokens => Set<UserToken>();
-    public DbSet<LoginLog> LoginLogs => Set<LoginLog>();
-    public DbSet<KycVerification> KycVerifications => Set<KycVerification>();
-    // Administrative
-    public DbSet<AdministrativeProvince> AdministrativeProvinces => Set<AdministrativeProvince>();
-    public DbSet<AdministrativeDistrict> AdministrativeDistricts => Set<AdministrativeDistrict>();
-    public DbSet<AdministrativeWard> AdministrativeWards => Set<AdministrativeWard>();
-    // Properties
+    
+    // Người 5 - Admin Approval & Public Listing
+    public DbSet<KYCVerification> KYCVerifications => Set<KYCVerification>();
     public DbSet<RoomingHouse> RoomingHouses => Set<RoomingHouse>();
     public DbSet<Room> Rooms => Set<Room>();
     public DbSet<RoomPriceTier> RoomPriceTiers => Set<RoomPriceTier>();
-    public DbSet<Amenity> Amenities => Set<Amenity>();
-    public DbSet<RoomingHouseAmenity> RoomingHouseAmenities => Set<RoomingHouseAmenity>();
-    public DbSet<RoomAmenity> RoomAmenities => Set<RoomAmenity>();
-    public DbSet<PropertyImage> PropertyImages => Set<PropertyImage>();
-    public DbSet<RoomingHouseLegalDocument> RoomingHouseLegalDocuments => Set<RoomingHouseLegalDocument>();
+    public DbSet<RoomingHouseImage> RoomingHouseImages => Set<RoomingHouseImage>();
+    public DbSet<RoomImage> RoomImages => Set<RoomImage>();
+    public DbSet<ApprovalAuditLog> ApprovalAuditLogs => Set<ApprovalAuditLog>();
 
-    public async Task<IAppDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
-    {
-        var transaction = await Database.BeginTransactionAsync(cancellationToken);
-        return new AppDbContextTransaction(transaction);
-    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+
+        // Seed dữ liệu mẫu Interval 1 (HasData) — ID cố định trong SeedIds.
+        AppSeedData.Apply(modelBuilder);
     }
 }
