@@ -1,0 +1,132 @@
+.home-page {
+  min-height: 100vh;
+  background: var(--color-page);
+}
+
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px clamp(18px, 5vw, 64px);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.home-brand {
+  display: grid;
+  gap: 2px;
+}
+
+.home-brand strong {
+  color: var(--color-text);
+  font-size: 20px;
+}
+
+.home-brand span {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.home-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.home-nav a,
+.home-nav button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.home-nav .home-nav__primary {
+  background: var(--color-primary);
+  color: var(--color-surface);
+}
+
+.home-main {
+  display: grid;
+  gap: 24px;
+  padding: clamp(22px, 5vw, 64px);
+}
+
+.home-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  align-items: center;
+  gap: 28px;
+}
+
+.home-hero h1 {
+  max-width: 780px;
+  margin: 0;
+  color: var(--color-text);
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: 1.05;
+}
+
+.home-hero p {
+  max-width: 640px;
+  margin: 14px 0 0;
+  color: var(--color-muted);
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.home-panel {
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.home-panel h2 {
+  margin: 0 0 10px;
+}
+
+.home-panel p {
+  margin: 0;
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+
+.home-status {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border-radius: var(--radius-md);
+  background: var(--color-sidebar);
+  color: var(--color-surface);
+}
+
+.home-status span {
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.home-status strong {
+  font-size: 20px;
+}
+
+@media (max-width: 760px) {
+  .home-header,
+  .home-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .home-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .home-nav {
+    justify-content: flex-start;
+  }
+}
