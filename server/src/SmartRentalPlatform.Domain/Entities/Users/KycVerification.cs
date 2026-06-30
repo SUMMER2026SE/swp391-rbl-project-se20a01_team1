@@ -7,15 +7,16 @@ public class KycVerification
     public Guid Id { get; set; }
     public Guid UserId { get; set; }
     public KycDocumentType DocumentType { get; set; }
-    public EkycProvider EkycProvider { get; set; }
+    public EkycProvider EkycProvider { get; set; } = EkycProvider.VNPT;
     public string? EkycSessionId { get; set; }
     public string FrontImageObjectKey { get; set; } = string.Empty;
     public string BackImageObjectKey { get; set; } = string.Empty;
     public string SelfieImageObjectKey { get; set; } = string.Empty;
-    public SelfieCaptureMethod SelfieCaptureMethod { get; set; }
+    public SelfieCaptureMethod SelfieCaptureMethod { get; set; } = SelfieCaptureMethod.Upload;
     public string? OcrFullName { get; set; }
     public string? OcrCitizenIdMasked { get; set; }
     public string CitizenIdHash { get; set; } = string.Empty;
+    public string? DocumentNumberEncrypted { get; set; }
     public DateOnly? OcrDateOfBirth { get; set; }
     public string? OcrGender { get; set; }
     public string? OcrAddress { get; set; }
@@ -24,10 +25,10 @@ public class KycVerification
     public decimal? FaceMatchScore { get; set; }
     public FaceMatchResult? FaceMatchResult { get; set; }
     public LivenessResult? LivenessResult { get; set; }
-    public EkycResult EkycResult { get; set; }
+    public EkycResult EkycResult { get; set; } = EkycResult.ProviderError;
     public string? EkycErrorCode { get; set; }
     public string? EkycErrorMessage { get; set; }
-    public KycRiskLevel RiskLevel { get; set; }
+    public KycRiskLevel RiskLevel { get; set; } = KycRiskLevel.High;
     public KycVerificationStatus Status { get; set; } = KycVerificationStatus.Pending;
     public Guid? ReviewedByAdminId { get; set; }
     public string? RejectedReason { get; set; }

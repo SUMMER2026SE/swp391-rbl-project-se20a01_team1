@@ -1,122 +1,160 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
-using SmartRentalPlatform.Api.Middleware;
-using SmartRentalPlatform.Api.Services;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
+using SmartRentalPlatform.Api.Extensions;
+using SmartRentalPlatform.Api.Middlewares;
 using SmartRentalPlatform.Application;
 using SmartRentalPlatform.Application.Common.Interfaces;
-using SmartRentalPlatform.Contracts.Common;
-using SmartRentalPlatform.Contracts.Requests.Kyc;
 using SmartRentalPlatform.Infrastructure;
 using SmartRentalPlatform.Infrastructure.Persistence;
 using SmartRentalPlatform.Infrastructure.Persistence.Seed;
-using System.Text;
+using SmartRentalPlatform.Infrastructure.Persistence.Seeders;
+using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers()
-    .ConfigureApiBehaviorOptions(options =>
-    {
-        options.InvalidModelStateResponseFactory = context =>
-        {
-            bool HasFieldError(string key) =>
-                context.ModelState.TryGetValue(key, out var entry) && entry.Errors.Count > 0;
+QuestPDF.Settings.License = LicenseType.Community;
 
-            var code = ErrorCodes.ValidationError;
+// Đăng ký controller để dùng mô hình API Controller.
+builder.Services.AddControllers();
 
-            if (HasFieldError(nameof(SubmitKycRequest.FrontImage)))
-                code = ErrorCodes.FrontImageRequired;
-            else if (HasFieldError(nameof(SubmitKycRequest.BackImage)))
-                code = ErrorCodes.BackImageRequired;
-            else if (HasFieldError(nameof(SubmitKycRequest.SelfieImage)))
-                code = ErrorCodes.SelfieRequired;
+// Đăng ký Swagger để test API trên trình duyệt.
+builder.Services.AddSwaggerDocumentation();
 
-            return new BadRequestObjectResult(new { success = false, code });
-        };
-    });
+// Đăng ký JWT authentication và authorization.
+builder.Services.AddJwtAuthentication(builder.Configuration);
 
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+// Cho phép frontend React gọi backend.
+builder.Services.AddClientCors();
 
-var jwtSection = builder.Configuration.GetSection("Jwt");
-var secretKey = jwtSection["SecretKey"];
-
-if (string.IsNullOrWhiteSpace(secretKey))
+// Rate limiting: 10 requests / phút cho AI chatbot endpoint.
+builder.Services.AddRateLimiter(options =>
 {
-    throw new InvalidOperationException("JWT secret key is not configured.");
-}
-
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    options.AddFixedWindowLimiter("AiChat", config =>
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtSection["Issuer"],
-            ValidAudience = jwtSection["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(secretKey))
-        };
+        config.PermitLimit = 10;
+        config.Window = TimeSpan.FromMinutes(1);
+        config.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+        config.QueueLimit = 2;
     });
 
-builder.Services.AddAuthorization();
-builder.Services.AddHttpContextAccessor();
-
-builder.Services.AddScoped<SmartRentalPlatform.Application.Abstractions.ICurrentUserService, CurrentUserService>();
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("ClientApp", policy =>
+    options.OnRejected = async (context, cancellationToken) =>
     {
-        policy
-            .WithOrigins("http://localhost:5173", "http://127.0.0.1:5173")
-            .AllowAnyHeader()
-            .AllowAnyMethod();
-    });
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new SmartRentalPlatform.Contracts.Common.ApiErrorResponse
+            {
+                Success = false,
+                ErrorCode = "TOO_MANY_REQUESTS",
+                Message = "Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau 1 phút.",
+                Details = new { retryAfter = "1 minute" }
+            }, cancellationToken);
+    };
 });
 
+// Đăng ký các layer tự viết.
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
 
-await SeedDataAsync(app);
-
-if (app.Environment.IsDevelopment())
+if (ShouldSeedDevelopmentData(app))
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    await using var scope = app.Services.CreateAsyncScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var passwordService = scope.ServiceProvider.GetRequiredService<IPasswordService>();
+    await DevelopmentDataSeed.SeedAdminAsync(dbContext, passwordService);
+    await DevelopmentDataSeed.SeedAsync(dbContext, passwordService);
 }
 
-app.UseMiddleware<ExceptionHandlingMiddleware>();
+if (ShouldSeedWalletQaData(app))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var passwordService = scope.ServiceProvider.GetRequiredService<IPasswordService>();
+    await WalletQaDataSeeder.SeedAsync(dbContext, passwordService);
+}
+
+// Chỉ bật Swagger ở môi trường Development.
+app.UseSwaggerDocumentation();
 
 // app.UseHttpsRedirection();
 
-app.UseCors("ClientApp");
+// Middleware bắt exception phải đặt sớm nhất để bắt mọi lỗi.
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-app.UseStaticFiles();
+// CORS phải đặt trước Authorization.
+app.UseCors(CorsExtensions.ClientAppPolicyName);
+
+// Rate limiting middleware — phải sau CORS, trước controllers.
+app.UseRateLimiter();
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = "*";
+    }
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapPost("/dev/email/test-otp", async (
+        TestEmailOtpRequest request,
+        IEmailSender emailSender,
+        CancellationToken cancellationToken) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Email))
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "Email is required."
+            });
+        }
+
+        var otp = Random.Shared.Next(0, 1_000_000).ToString("D6");
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName)
+            ? "Tester"
+            : request.DisplayName.Trim();
+
+        await emailSender.SendEmailVerificationOtpAsync(
+            request.Email.Trim(),
+            displayName,
+            otp,
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            success = true,
+            email = request.Email.Trim(),
+            otp,
+            message = "Test OTP email sent in Development environment."
+        });
+    })
+    .AllowAnonymous()
+    .WithTags("Dev");
+}
 
 app.MapControllers();
 
 app.Run();
 
-static async Task SeedDataAsync(WebApplication app)
+static bool ShouldSeedDevelopmentData(WebApplication app)
 {
-    using var scope = app.Services.CreateScope();
-    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-    if (!app.Environment.IsDevelopment())
-    {
-        return;
-    }
-
-    var passwordService = scope.ServiceProvider.GetRequiredService<IPasswordService>();
-    await DevelopmentDataSeed.SeedAsync(context, passwordService);
+    return app.Environment.IsDevelopment() &&
+        app.Configuration.GetValue("SeedData:Development:Enabled", false);
 }
+
+static bool ShouldSeedWalletQaData(WebApplication app)
+{
+    return app.Environment.IsDevelopment() &&
+        app.Configuration.GetValue("SeedData:WalletQa:Enabled", false);
+}
+
+public sealed record TestEmailOtpRequest(string Email, string? DisplayName);
+
+public partial class Program;

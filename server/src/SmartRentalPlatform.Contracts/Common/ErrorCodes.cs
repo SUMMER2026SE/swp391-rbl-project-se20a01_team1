@@ -35,13 +35,11 @@ public static class ErrorCodes
     public const string KycRejectReasonRequired = "KYC_REJECT_REASON_REQUIRED";
     public const string KycAlreadyApproved = "KYC_ALREADY_APPROVED";
     public const string KycPendingAdminReview = "KYC_PENDING_ADMIN_REVIEW";
-
-    public const string AccountNotActive = "ACCOUNT_NOT_ACTIVE";
     public const string FrontImageRequired = "FRONT_IMAGE_REQUIRED";
     public const string BackImageRequired = "BACK_IMAGE_REQUIRED";
     public const string SelfieRequired = "SELFIE_REQUIRED";
     public const string EkycDocumentFailed = "EKYC_DOCUMENT_FAILED";
-
+    public const string AccountNotActive = "ACCOUNT_NOT_ACTIVE";
     public const string RoleAlreadyExists = "ROLE_ALREADY_EXISTS";
     public const string RoleGrantFailed = "ROLE_GRANT_FAILED";
 
@@ -59,4 +57,62 @@ public static class ErrorCodes
     public const string AmenityNotFound = "AMENITY_NOT_FOUND";
     public const string ImageInvalidOwner = "IMAGE_INVALID_OWNER";
     public const string PriceTierInvalid = "PRICE_TIER_INVALID";
+
+    // Rental Policy
+    public const string RentalPolicyRequired = "RENTAL_POLICY_REQUIRED";
+    public const string RentalPolicyInvalid = "RENTAL_POLICY_INVALID";
+
+    // Rental Request / Deposit
+    public const string RentalRequestNotFound = "RENTAL_REQUEST_NOT_FOUND";
+    public const string RentalRequestInvalidStatus = "RENTAL_REQUEST_INVALID_STATUS";
+    public const string RentalRequestDuplicate = "RENTAL_REQUEST_DUPLICATE";
+    public const string RentalRequestForbidden = "RENTAL_REQUEST_FORBIDDEN";
+    public const string RentalRequestInvalidDuration = "RENTAL_REQUEST_INVALID_DURATION";
+    public const string RentalRequestOccupantLimitExceeded = "RENTAL_REQUEST_OCCUPANT_LIMIT_EXCEEDED";
+    public const string RentalRequestPaymentDeadlineInvalid = "RENTAL_REQUEST_PAYMENT_DEADLINE_INVALID";
+    public const string TenantOutstandingInvoice = "TENANT_OUTSTANDING_INVOICE";
+    public const string TenantFinalInvoicePending = "TENANT_FINAL_INVOICE_PENDING";
+    public const string RoomDepositAlreadyExists = "ROOM_DEPOSIT_ALREADY_EXISTS";
+    public const string RoomDepositNotFound = "ROOM_DEPOSIT_NOT_FOUND";
+    public const string RoomDepositForbidden = "ROOM_DEPOSIT_FORBIDDEN";
+    public const string RoomDepositInvalidStatus = "ROOM_DEPOSIT_INVALID_STATUS";
+    public const string RoomDepositExpired = "ROOM_DEPOSIT_EXPIRED";
+
+    // Rental Contract
+    public const string RentalContractNotFound = "RENTAL_CONTRACT_NOT_FOUND";
+    public const string RentalContractForbidden = "RENTAL_CONTRACT_FORBIDDEN";
+    public const string RentalContractInvalidStatus = "RENTAL_CONTRACT_INVALID_STATUS";
+    public const string RentalContractOccupantsRequired = "RENTAL_CONTRACT_OCCUPANTS_REQUIRED";
+    public const string RentalContractInvalidOccupant = "RENTAL_CONTRACT_INVALID_OCCUPANT";
+    public const string RentalContractAlreadySigned = "RENTAL_CONTRACT_ALREADY_SIGNED";
+    public const string ContractAppendixNotFound = "CONTRACT_APPENDIX_NOT_FOUND";
+    public const string ContractAppendixInvalidStatus = "CONTRACT_APPENDIX_INVALID_STATUS";
+    public const string ContractAppendixAlreadySigned = "CONTRACT_APPENDIX_ALREADY_SIGNED";
+    public const string ContractAppendixCreatorMustSignFirst = "CONTRACT_APPENDIX_CREATOR_MUST_SIGN_FIRST";
+
+    // Billing
+    public const string BillingServiceInvalid = "BILLING_SERVICE_INVALID";
+    public const string BillingPriceInvalid = "BILLING_PRICE_INVALID";
+    public const string BillingPriceNotFound = "BILLING_PRICE_NOT_FOUND";
+    public const string ContractNotFound = "CONTRACT_NOT_FOUND";
+    public const string MeterReadingInvalid = "METER_READING_INVALID";
+    public const string MeterReadingNotFound = "METER_READING_NOT_FOUND";
+    public const string InvoiceNotFound = "INVOICE_NOT_FOUND";
+    public const string InvoiceInvalidStatus = "INVOICE_INVALID_STATUS";
+    public const string InvoiceDuplicatePeriod = "INVOICE_DUPLICATE_PERIOD";
+    public const string FinalInvoiceNotAllowed = "FINAL_INVOICE_NOT_ALLOWED";
+    public const string WalletPaymentFailed = "WALLET_PAYMENT_FAILED";
+    public const string WalletInsufficientBalance = "WALLET_INSUFFICIENT_BALANCE";
+    public const string WalletInsufficientReservedBalance = "WALLET_INSUFFICIENT_RESERVED_BALANCE";
+
+    // Viewing Appointment
+    public const string ViewingAppointmentNotFound = "VIEWING_APPOINTMENT_NOT_FOUND";
+    public const string ViewingAppointmentInvalidStatus = "VIEWING_APPOINTMENT_INVALID_STATUS";
+    public const string ViewingAppointmentTimeInPast = "VIEWING_APPOINTMENT_TIME_IN_PAST";
+    public const string ViewingAppointmentReasonRequired = "VIEWING_APPOINTMENT_REASON_REQUIRED";
+    public const string ViewingAppointmentConflict = "VIEWING_APPOINTMENT_CONFLICT";
+    public const string ViewingAppointmentNotAllowed = "VIEWING_APPOINTMENT_NOT_ALLOWED";
+    public const string ViewingAppointmentDuplicate = "VIEWING_APPOINTMENT_DUPLICATE";
+    public const string HouseRuleRequired = "HOUSE_RULE_REQUIRED";
+    public const string HouseRuleInvalid = "HOUSE_RULE_INVALID";
 }
