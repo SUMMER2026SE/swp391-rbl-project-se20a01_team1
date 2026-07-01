@@ -52,20 +52,16 @@ public class BillingService : IBillingService
             .Include(x => x.Room)
                 .ThenInclude(x => x.RoomingHouse)
             .Include(x => x.MainTenantUser)
+            .WhereActiveForOccupiedOrReservedRoom()
             .Where(x => x.RoomId == roomId &&
-                        x.Status == RentalContractStatus.Active &&
-                        (x.Room.Status == RoomStatus.Occupied ||
-                         x.Room.Status == RoomStatus.Reserved) &&
-                        x.Room.RoomingHouse.LandlordUserId == landlordUserId &&
-                        x.Room.DeletedAt == null &&
-                        x.Room.RoomingHouse.DeletedAt == null)
+                        x.Room.RoomingHouse.LandlordUserId == landlordUserId)
             .OrderByDescending(x => x.ActivatedAt ?? x.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken)
             ?? throw new NotFoundException(
                 ErrorCodes.RentalContractNotFound,
                 "Phòng này chưa có hợp đồng Active để tạo hóa đơn.");
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = GetBusinessToday();
         var effectiveTerms = await ResolveEffectiveContractTermsAsync(
             contract.Id,
             contract.StartDate,
@@ -129,13 +125,9 @@ public class BillingService : IBillingService
             .AsNoTracking()
             .Include(x => x.Room)
                 .ThenInclude(x => x.RoomingHouse)
+            .WhereActiveForOccupiedOrReservedRoom()
             .Where(x => x.RoomId == roomId &&
-                        x.Status == RentalContractStatus.Active &&
-                        (x.Room.Status == RoomStatus.Occupied ||
-                         x.Room.Status == RoomStatus.Reserved) &&
-                        x.Room.RoomingHouse.LandlordUserId == landlordUserId &&
-                        x.Room.DeletedAt == null &&
-                        x.Room.RoomingHouse.DeletedAt == null)
+                        x.Room.RoomingHouse.LandlordUserId == landlordUserId)
             .OrderByDescending(x => x.ActivatedAt ?? x.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken)
             ?? throw new NotFoundException(
@@ -1303,8 +1295,13 @@ public class BillingService : IBillingService
 
     private static bool IsFutureBillingPeriod(ResolvedBillingPeriod period)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = GetBusinessToday();
         return period.Start > today || period.End > today;
+    }
+
+    private static DateOnly GetBusinessToday()
+    {
+        return DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
     }
 
     private static string BuildExpectedInvoicePeriodMessage(
@@ -2063,7 +2060,7 @@ public class BillingService : IBillingService
         Guid? contractId,
         CancellationToken cancellationToken)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = GetBusinessToday();
         var query = context.Invoices
             .Where(x => x.DueDate < today &&
                         x.Status == InvoiceStatus.Issued);

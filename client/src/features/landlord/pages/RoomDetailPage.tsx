@@ -40,6 +40,7 @@ import {
   loadAccessibleContractFiles,
 } from '../../contracts/appendixFiles';
 import { AppendixFileActions } from '../../contracts/components/AppendixFileActions';
+import { LandlordCreateAppendixModalV2 } from '../../contracts/components/LandlordCreateAppendixModalV2';
 import type { Amenity, PropertyImageRequest } from '../../rooming-houses/types';
 import { getAmenities } from '../../rooming-houses/api';
 import PropertyImageEditor from '../../rooming-houses/components/PropertyImageEditor';
@@ -433,6 +434,20 @@ export default function RoomDetailPage() {
   const roomEditLocked = isRoomEditLocked(selectedRoom);
   const canToggleRoomMaintenance = selectedRoom?.status === 'Available' || selectedRoom?.status === 'Maintenance';
 
+  const displayMessage = message || (
+    selectedRoom?.status === 'Available'
+      ? 'Phòng đã được hiển thị hoạt động và sẵn sàng cho thuê.'
+      : selectedRoom?.status === 'Maintenance'
+      ? 'Phòng đang tạm ngưng hiển thị.'
+      : selectedRoom?.status === 'Hidden'
+      ? 'Phòng đang ẩn và chưa sẵn sàng cho thuê.'
+      : selectedRoom?.status === 'Occupied'
+      ? 'Phòng đang được thuê và hoạt động bình thường.'
+      : selectedRoom?.status === 'Reserved'
+      ? 'Phòng đã được giữ chỗ.'
+      : ''
+  );
+
   if (loading) {
     return (
       <div className="rooming-house-detail-page" style={{ display: 'contents' }}>
@@ -476,19 +491,78 @@ export default function RoomDetailPage() {
               </svg>
             </button>
             <div className="overview-left">
-              <p className="eyebrow">{house.addressDisplay}</p>
-              <h2>
+              <p className="eyebrow" style={{ display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase', fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+                {house.addressDisplay}
+              </p>
+              <h2 style={{ color: '#0f172a' }}>
                 {`Phòng ${selectedRoom?.roomNumber} - ${house.name}`}
               </h2>
-              <p className="overview-description">
-                {`Diện tích: ${selectedRoom?.areaM2 ? `${selectedRoom.areaM2} m²` : 'Chưa nhập'} | Tầng: ${selectedRoom?.floor} | Tối đa: ${selectedRoom?.maxOccupants} người`}
-              </p>
+              <div className="overview-meta-list" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', marginTop: '6px' }}>
+                <span className="meta-item" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13.5px', color: '#64748b' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="9" y1="3" x2="9" y2="21" />
+                    <line x1="15" y1="3" x2="15" y2="21" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="3" y1="15" x2="21" y2="15" />
+                  </svg>
+                  Diện tích: <strong>{selectedRoom?.areaM2 ? `${selectedRoom.areaM2} m²` : 'Chưa nhập'}</strong>
+                </span>
+                <span style={{ color: '#cbd5e1' }}>|</span>
+                <span className="meta-item" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13.5px', color: '#64748b' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="4" y="2" width="16" height="20" rx="2" ry="2" />
+                    <line x1="9" y1="22" x2="9" y2="16" />
+                    <line x1="9" y1="16" x2="15" y2="16" />
+                    <line x1="15" y1="16" x2="15" y2="22" />
+                    <line x1="12" y1="6" x2="12" y2="6.01" strokeWidth="2" />
+                    <line x1="12" y1="10" x2="12" y2="10.01" strokeWidth="2" />
+                  </svg>
+                  Tầng: <strong>{selectedRoom?.floor}</strong>
+                </span>
+                <span style={{ color: '#cbd5e1' }}>|</span>
+                <span className="meta-item" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13.5px', color: '#64748b' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                  Tối đa: <strong>{selectedRoom?.maxOccupants} người</strong>
+                </span>
+              </div>
             </div>
           </div>
 
           <div className="overview-right">
             <div className="overview-stats" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <span className={`status-pill ${getStatusToneClass(selectedRoom.status)}`} style={{ padding: '8px 16px', fontSize: '15px', fontWeight: 'bold', border: '1px solid currentColor' }}>
+              <span 
+                className={`status-pill ${getStatusToneClass(selectedRoom.status)}`} 
+                style={{ 
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '6px 14px', 
+                  fontSize: '13.5px', 
+                  fontWeight: 600, 
+                  borderRadius: '999px',
+                  border: '1px solid currentColor',
+                  gap: '6px',
+                  background: selectedRoom.status === 'Available' ? '#effaf3' : undefined,
+                  color: selectedRoom.status === 'Available' ? '#10b981' : undefined,
+                  borderColor: selectedRoom.status === 'Available' ? '#a7f3d0' : 'currentColor',
+                }}
+              >
+                <span style={{ 
+                  width: '6px', 
+                  height: '6px', 
+                  borderRadius: '50%', 
+                  backgroundColor: 'currentColor', 
+                  display: 'inline-block' 
+                }} />
                 {formatStatus(selectedRoom.status)}
               </span>
               {canToggleRoomMaintenance && (
@@ -497,13 +571,43 @@ export default function RoomDetailPage() {
                   variant="outline"
                   onClick={handleToggleRoomMaintenance}
                   disabled={actionLoading}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    borderColor: '#cbd5e1',
+                    color: '#0f172a',
+                    fontSize: '13.5px',
+                    fontWeight: 600,
+                    padding: '6px 14px',
+                    borderRadius: '999px',
+                    minHeight: '34px',
+                    backgroundColor: '#ffffff'
+                  }}
                 >
-                  {selectedRoom.status === 'Available' ? 'Tạm ngưng' : 'Mở lại phòng'}
+                  {selectedRoom.status === 'Available' ? (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="10" y1="9" x2="10" y2="15" />
+                        <line x1="14" y1="9" x2="14" y2="15" />
+                      </svg>
+                      Tạm ngưng
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <polygon points="10 8 16 12 10 16 10 8" />
+                      </svg>
+                      Mở lại phòng
+                    </>
+                  )}
                 </Button>
               )}
             </div>
 
-            <div className="tabs" style={{ display: 'flex', alignItems: 'center', marginTop: '20px', marginBottom: 0 }}>
+            <div className="room-detail-main-tabs" style={{ display: 'flex', alignItems: 'center', marginTop: '20px', marginBottom: 0 }}>
               <button
                 className={mainTab === 'room-info' ? 'active' : ''}
                 onClick={() => setMainTab('room-info')}
@@ -538,32 +642,82 @@ export default function RoomDetailPage() {
           </div>
         </section>
 
-        {message && <p className="dashboard-message">{message}</p>}
-        {actionLoading && <p className="dashboard-message" style={{ background: '#dbeafe', color: '#1e40af' }}>Đang lưu thay đổi...</p>}
+        {displayMessage && (
+          <div className={`rooming-house-rule-editor__alert ${
+            displayMessage.toLowerCase().includes('không thể') || displayMessage.toLowerCase().includes('lỗi')
+              ? 'rooming-house-rule-editor__alert--danger'
+              : displayMessage.toLowerCase().includes('vui lòng') || displayMessage.toLowerCase().includes('chưa') || displayMessage.toLowerCase().includes('phòng đã được') || displayMessage.toLowerCase().includes('tạm ngưng')
+              ? 'rooming-house-rule-editor__alert--warning'
+              : 'rooming-house-rule-editor__alert--success'
+          }`} style={{ marginTop: '20px', marginBottom: '10px' }}>
+            {displayMessage.toLowerCase().includes('không thể') || displayMessage.toLowerCase().includes('lỗi') ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="15" y1="9" x2="9" y2="15" />
+                <line x1="9" y1="9" x2="15" y2="15" />
+              </svg>
+            ) : displayMessage.toLowerCase().includes('vui lòng') || displayMessage.toLowerCase().includes('chưa') || displayMessage.toLowerCase().includes('phòng đã được') || displayMessage.toLowerCase().includes('tạm ngưng') ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+            )}
+            <span>{displayMessage}</span>
+          </div>
+        )}
+        {actionLoading && <p className="dashboard-message" style={{ background: '#dbeafe', color: '#1e40af', marginTop: '10px' }}>Đang lưu thay đổi...</p>}
 
         {mainTab === 'room-info' && (
           <div className="editor-panel" style={{ marginTop: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div className="tabs" style={{ marginBottom: 0 }}>
+              <div className="room-detail-sub-tabs" style={{ marginBottom: 0 }}>
                 <button className={roomActiveTab === 'basic' ? 'active' : ''} onClick={() => setRoomActiveTab('basic')}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                  </svg>
                   Thông tin cơ bản
                 </button>
                 <button
                   className={roomActiveTab === 'images' ? 'active' : ''}
                   onClick={() => setRoomActiveTab('images')}
                 >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <polyline points="21 15 16 10 5 21" />
+                  </svg>
                   Ảnh phòng
                 </button>
                 <button
                   className={roomActiveTab === 'amenities' ? 'active' : ''}
                   onClick={() => setRoomActiveTab('amenities')}
                 >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="7" height="7" />
+                    <rect x="14" y="3" width="7" height="7" />
+                    <rect x="14" y="14" width="7" height="7" />
+                    <rect x="3" y="14" width="7" height="7" />
+                  </svg>
                   Tiện ích phòng
                 </button>
                 <button
                   className={roomActiveTab === 'price' ? 'active' : ''}
                   onClick={() => setRoomActiveTab('price')}
                 >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                    <line x1="7" y1="7" x2="7.01" y2="7" strokeWidth="2.5" />
+                  </svg>
                   Bảng giá
                 </button>
               </div>
@@ -642,7 +796,14 @@ export default function RoomDetailPage() {
                 </label>
 
                 <div className="save-row">
-                  <button className="primary-action" onClick={handleSaveRoomBasic} disabled={roomEditLocked || actionLoading}>Lưu thông tin</button>
+                  <button className="primary-action" onClick={handleSaveRoomBasic} disabled={roomEditLocked || actionLoading}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                      <polyline points="17 21 17 13 7 13 7 21" />
+                      <polyline points="7 3 7 8 15 8" />
+                    </svg>
+                    Lưu thông tin
+                  </button>
                 </div>
               </div>
             )}
@@ -891,7 +1052,7 @@ export default function RoomDetailPage() {
 
         {/* TAB 4: HÓA ĐƠN */}
         {mainTab === 'invoices' && (
-          <div className="empty-panel" style={{ marginTop: '20px', textAlign: 'left' }}>
+          <div className="history-detail-content" style={{ marginTop: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'center', marginBottom: '16px' }}>
               <div>
                 <h2>Hóa đơn của hợp đồng hiện tại</h2>
@@ -1648,429 +1809,6 @@ function isRoomEditLocked(room: Room | null) {
   return room?.status === 'Reserved' || room?.status === 'Occupied';
 }
 
-type LandlordAppendixChangeMode = 'monthlyRent' | 'paymentDay';
-
-interface LandlordAppendixChangeForm {
-  id: string;
-  mode: LandlordAppendixChangeMode;
-  value: string;
-}
-
-function LandlordCreateAppendixModalV2({
-  contract,
-  appendix,
-  onClose,
-  onCreated,
-}: {
-  contract: ContractDetailResponse;
-  appendix?: ContractAppendixResponse;
-  onClose: () => void;
-  onCreated: (appendix: ContractAppendixResponse) => void;
-}) {
-  const today = new Date().toISOString().slice(0, 10);
-  const [effectiveDate, setEffectiveDate] = useState(appendix?.effectiveDate ?? today);
-  const [changes, setChanges] = useState<LandlordAppendixChangeForm[]>(() =>
-    buildLandlordAppendixChangeForms(appendix, contract)
-  );
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function addChange() {
-    setChanges((current) => {
-      const mode: LandlordAppendixChangeMode = current.some((item) => item.mode === 'monthlyRent')
-        ? 'paymentDay'
-        : 'monthlyRent';
-
-      return [...current, createLandlordAppendixChange(mode, getLandlordAppendixDefaultValue(mode, contract))];
-    });
-  }
-
-  function removeChange(id: string) {
-    setChanges((current) => current.filter((item) => item.id !== id));
-  }
-
-  function updateChange(id: string, patch: Partial<LandlordAppendixChangeForm>) {
-    setChanges((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
-  }
-
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-
-    const payloadChanges: ContractAppendixChangeRequest[] = [];
-    const seenModes = new Set<LandlordAppendixChangeMode>();
-
-    for (let index = 0; index < changes.length; index++) {
-      const change = changes[index];
-      const number = index + 1;
-
-      if (seenModes.has(change.mode)) {
-        setError(`Thay đổi #${number}: loại thay đổi bị trùng.`);
-        return;
-      }
-
-      seenModes.add(change.mode);
-
-      if (change.mode === 'monthlyRent') {
-        const monthlyRent = Number.parseFloat(change.value);
-        if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
-          setError(`Thay đổi #${number}: giá thuê mới phải lớn hơn 0.`);
-          return;
-        }
-
-        if (!appendix && monthlyRent === contract.monthlyRent) {
-          setError(`Thay đổi #${number}: giá thuê mới phải khác giá thuê hiện tại.`);
-          return;
-        }
-
-        payloadChanges.push({
-          changeType: 'Update',
-          targetType: 'Contract',
-          fieldName: 'monthlyRent',
-          newValue: String(monthlyRent),
-        });
-        continue;
-      }
-
-      const paymentDay = Number.parseInt(change.value, 10);
-      if (!Number.isInteger(paymentDay) || paymentDay < 1 || paymentDay > 28) {
-        setError(`Thay đổi #${number}: ngày thanh toán mới phải nằm trong khoảng 1 đến 28.`);
-        return;
-      }
-
-      if (!appendix && paymentDay === contract.paymentDay) {
-        setError(`Thay đổi #${number}: ngày thanh toán mới phải khác ngày hiện tại.`);
-        return;
-      }
-
-      payloadChanges.push({
-        changeType: 'Update',
-        targetType: 'Contract',
-        fieldName: 'paymentDay',
-        newValue: String(paymentDay),
-      });
-    }
-
-    if (payloadChanges.length === 0) {
-      setError('Vui lòng thêm ít nhất một thay đổi trước khi gửi phụ lục.');
-      return;
-    }
-
-    try {
-      setIsSubmitting(true);
-      setError(null);
-
-      const payload = {
-        effectiveDate,
-        changes: payloadChanges,
-      };
-      const response = appendix
-        ? await contractApi.updateAppendix(contract.id, appendix.id, payload)
-        : await contractApi.createAppendix(contract.id, payload);
-
-      onCreated(response.data);
-    } catch (err) {
-      setError(getApiErrorMessage(err, 'Không thể tạo phụ lục. Vui lòng kiểm tra lại thông tin.'));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="occupants-setup-overlay">
-      <div className="occupants-setup-container-modal">
-        <div className="occupants-setup-header">
-          <h2>{appendix ? 'Sửa phụ lục' : 'Tạo phụ lục'}</h2>
-          <button type="button" className="occupants-setup-close-btn" onClick={onClose}>&times;</button>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-          <div className="occupants-setup-modal-content">
-            <div className="form-group" style={{ marginBottom: '24px' }}>
-              <label>Ngày hiệu lực</label>
-              <input
-                type="date"
-                value={effectiveDate}
-                min={today}
-                onChange={(event) => setEffectiveDate(event.target.value)}
-                required
-              />
-            </div>
-
-            <div className="occupants-list">
-              {changes.map((change, index) => (
-                <div key={change.id} className="occupant-card">
-                  <div className="occupant-card-header">
-                    <h3 style={{ margin: 0, fontSize: '1rem' }}>Thay đổi #{index + 1}</h3>
-                    {changes.length > 1 && (
-                      <button type="button" className="remove-btn" onClick={() => removeChange(change.id)}>
-                        Xóa
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="form-group">
-                    <label>Loại thay đổi</label>
-                    <select
-                      value={change.mode}
-                      onChange={(event) => {
-                        const mode = event.target.value as LandlordAppendixChangeMode;
-                        updateChange(change.id, {
-                          mode,
-                          value: getLandlordAppendixDefaultValue(mode, contract)
-                        });
-                      }}
-                    >
-                      <option value="monthlyRent">Thay đổi giá thuê</option>
-                      <option value="paymentDay">Thay đổi ngày thanh toán</option>
-                    </select>
-                  </div>
-
-                  {change.mode === 'monthlyRent' ? (
-                    <div className="form-group">
-                      <label>Giá thuê hàng tháng</label>
-                      <input
-                        type="number"
-                        value={change.value}
-                        onChange={(event) => updateChange(change.id, { value: event.target.value })}
-                        required
-                      />
-                    </div>
-                  ) : (
-                    <div className="form-group">
-                      <label>Ngày thanh toán hàng tháng</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="28"
-                        value={change.value}
-                        onChange={(event) => updateChange(change.id, { value: event.target.value })}
-                        required
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {error && (
-              <p style={{ color: '#dc2626', marginTop: '12px', fontSize: '0.95rem' }}>
-                {error}
-              </p>
-            )}
-          </div>
-
-          <div className="setup-actions" style={{ padding: '16px 24px', backgroundColor: '#fff', borderRadius: '0 0 16px 16px', columnGap: '12px' }}>
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={addChange}
-              disabled={isSubmitting || changes.length >= 2}
-              style={{ marginRight: 'auto' }}
-            >
-              + Thêm thay đổi
-            </Button>
-            <Button variant="outline" type="button" onClick={onClose} disabled={isSubmitting}>Hủy</Button>
-            <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Đang lưu...' : 'Gửi phụ lục'}</Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function createLandlordAppendixChange(
-  mode: LandlordAppendixChangeMode,
-  value: string
-): LandlordAppendixChangeForm {
-  return {
-    id: crypto.randomUUID(),
-    mode,
-    value,
-  };
-}
-
-function buildLandlordAppendixChangeForms(
-  appendix: ContractAppendixResponse | undefined,
-  contract: ContractDetailResponse
-): LandlordAppendixChangeForm[] {
-  if (!appendix) {
-    return [createLandlordAppendixChange('monthlyRent', String(contract.monthlyRent))];
-  }
-
-  const forms = appendix.changes
-    .filter((change) => change.changeType === 'Update' && change.targetType === 'Contract')
-    .map((change) => {
-      const fieldName = normalizeLandlordAppendixFieldName(change.fieldName);
-      if (fieldName === 'paymentday') {
-        return createLandlordAppendixChange('paymentDay', parseAppendixScalarValue(change.newValue) || String(contract.paymentDay));
-      }
-
-      if (fieldName === 'monthlyrent') {
-        return createLandlordAppendixChange('monthlyRent', parseAppendixScalarValue(change.newValue) || String(contract.monthlyRent));
-      }
-
-      return null;
-    })
-    .filter((change): change is LandlordAppendixChangeForm => Boolean(change));
-
-  return forms.length > 0 ? forms : [createLandlordAppendixChange('monthlyRent', String(contract.monthlyRent))];
-}
-
-function getLandlordAppendixDefaultValue(mode: LandlordAppendixChangeMode, contract: ContractDetailResponse) {
-  return mode === 'monthlyRent' ? String(contract.monthlyRent) : String(contract.paymentDay);
-}
-
-function normalizeLandlordAppendixFieldName(value?: string | null) {
-  return value?.replace(/_/g, '').toLowerCase() ?? '';
-}
-
-function parseAppendixScalarValue(value?: string | null) {
-  if (!value) return '';
-
-  try {
-    const parsed = JSON.parse(value);
-    return typeof parsed === 'string' ? parsed : '';
-  } catch {
-    return value;
-  }
-}
-
-function LandlordCreateAppendixModal({
-  contract,
-  appendix,
-  onClose,
-  onCreated,
-}: {
-  contract: ContractDetailResponse;
-  appendix?: ContractAppendixResponse;
-  onClose: () => void;
-  onCreated: (appendix: ContractAppendixResponse) => void;
-}) {
-  const today = new Date().toISOString().slice(0, 10);
-  const [effectiveDate, setEffectiveDate] = useState(appendix?.effectiveDate ?? today);
-  const [monthlyRent, setMonthlyRent] = useState(resolveAppendixFieldValue(appendix, 'monthlyRent') ?? String(contract.monthlyRent));
-  const [paymentDay, setPaymentDay] = useState(resolveAppendixFieldValue(appendix, 'paymentDay') ?? String(contract.paymentDay));
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-
-    const parsedMonthlyRent = Number.parseFloat(monthlyRent);
-    const parsedPaymentDay = Number.parseInt(paymentDay, 10);
-    const changes: ContractAppendixChangeRequest[] = [];
-
-    if (Number.isFinite(parsedMonthlyRent) && (appendix || parsedMonthlyRent !== contract.monthlyRent)) {
-      if (parsedMonthlyRent <= 0) {
-        setError('Giá thuê mới phải lớn hơn 0.');
-        return;
-      }
-
-      changes.push({
-        changeType: 'Update',
-        targetType: 'Contract',
-        fieldName: 'monthlyRent',
-        newValue: String(parsedMonthlyRent),
-      });
-    }
-
-    if (Number.isInteger(parsedPaymentDay) && (appendix || parsedPaymentDay !== contract.paymentDay)) {
-      if (parsedPaymentDay < 1 || parsedPaymentDay > 28) {
-        setError('Ngày thanh toán mới phải nằm trong khoảng 1 đến 28.');
-        return;
-      }
-
-      changes.push({
-        changeType: 'Update',
-        targetType: 'Contract',
-        fieldName: 'paymentDay',
-        newValue: String(parsedPaymentDay),
-      });
-    }
-
-    if (changes.length === 0) {
-      setError('Vui lòng thay đổi giá thuê hoặc ngày thanh toán trước khi gửi phụ lục.');
-      return;
-    }
-
-    try {
-      setIsSubmitting(true);
-      setError(null);
-      const payload = {
-        effectiveDate,
-        changes,
-      };
-      const response = appendix
-        ? await contractApi.updateAppendix(contract.id, appendix.id, payload)
-        : await contractApi.createAppendix(contract.id, payload);
-      onCreated(response.data);
-    } catch (err) {
-      setError(getApiErrorMessage(err, 'Không thể tạo phụ lục. Vui lòng kiểm tra lại thông tin.'));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="history-modal-overlay">
-      <div className="history-modal-content">
-        <div className="history-modal-header">
-          <h2>{appendix ? 'Sửa phụ lục' : 'Tạo phụ lục'}</h2>
-          <button className="history-modal-close" onClick={onClose}>&times;</button>
-        </div>
-
-        <form onSubmit={handleSubmit}>
-          <div className="history-modal-body">
-            <div className="history-form-group">
-              <label>Ngày hiệu lực</label>
-              <input
-                type="date"
-                className="ui-input"
-                value={effectiveDate}
-                min={today}
-                onChange={(event) => setEffectiveDate(event.target.value)}
-                required
-              />
-            </div>
-
-            <div className="history-form-group">
-              <label>Giá thuê hằng tháng</label>
-              <input
-                type="number"
-                className="ui-input"
-                value={monthlyRent}
-                onChange={(event) => setMonthlyRent(event.target.value)}
-              />
-            </div>
-
-            <div className="history-form-group">
-              <label>Ngày thanh toán hằng tháng</label>
-              <input
-                type="number"
-                min="1"
-                max="28"
-                className="ui-input"
-                value={paymentDay}
-                onChange={(event) => setPaymentDay(event.target.value)}
-              />
-            </div>
-
-            {error && (
-              <p style={{ color: '#dc2626', marginTop: '12px', fontSize: '0.95rem' }}>
-                {error}
-              </p>
-            )}
-          </div>
-
-          <div className="history-modal-footer">
-            <Button variant="outline" type="button" onClick={onClose} disabled={isSubmitting}>Hủy</Button>
-            <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Đang lưu...' : 'Gửi phụ lục'}</Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 function getAppendixStatusClass(status: ContractAppendixStatus) {
   switch (status) {
@@ -2228,3 +1966,4 @@ function PriceTierEditor({
     </div>
   );
 }
+

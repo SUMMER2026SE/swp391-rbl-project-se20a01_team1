@@ -1,105 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ROUTE_PATHS } from '../../../app/router/routePaths';
-import { getNotifications, markAsRead, markAllAsRead } from '../api';
+import { getNotifications, markAsRead, markAllAsRead, deleteNotification } from '../api';
+import { getNotificationCategory, getNotificationLink, getNotificationRole } from '../notificationUtils';
 import type { Notification } from '../types';
 import { LoadingState } from '../../../shared/components/feedback/LoadingState';
 import './NotificationsPage.css';
-
-const MOCK_NOTIFICATIONS: Notification[] = [
-  // Landlord notifications
-  {
-    id: 'mock-l1',
-    type: 'NewViewingAppointment',
-    title: 'Lịch xem phòng mới',
-    body: 'Huấn Xuân muốn xem phòng A01 tại Khu Trọ Xuân Huấn lúc 22:39 ngày 22/06/2026.',
-    isRead: false,
-    createdAt: '2026-06-22T13:39:00Z',
-    referenceType: 'ViewingAppointment',
-    referenceId: '1'
-  },
-  {
-    id: 'mock-l2',
-    type: 'PaymentReceived',
-    title: 'Nhận thanh toán thành công',
-    body: 'Bạn đã nhận được thanh toán +10.000 đ từ ví PayOS.',
-    isRead: false,
-    createdAt: '2026-06-22T10:32:00Z',
-    referenceType: 'Payment',
-    referenceId: '2'
-  },
-  {
-    id: 'mock-l3',
-    type: 'NewRentalRequest',
-    title: 'Yêu cầu thuê trọ mới',
-    body: 'Nguyễn Văn A đã gửi yêu cầu thuê phòng B02 tại Khu Trọ Xuân Huấn.',
-    isRead: false,
-    createdAt: '2026-06-22T09:15:00Z',
-    referenceType: 'RentalRequest',
-    referenceId: '3'
-  },
-  {
-    id: 'mock-l4',
-    type: 'ViewingAppointmentCancelled',
-    title: 'Khách thuê đã hủy lịch hẹn',
-    body: 'Khách thuê đã hủy lịch xem phòng A01 lúc 00:00 ngày 21/06/2026.',
-    isRead: false,
-    createdAt: '2026-06-21T22:11:00Z',
-    referenceType: 'ViewingAppointment',
-    referenceId: '4'
-  },
-  {
-    id: 'mock-l5',
-    type: 'NewViewingAppointment',
-    title: 'Lịch xem phòng mới',
-    body: 'Nguyễn Văn A muốn xem phòng B02 tại Khu Trọ Xuân Huấn lúc 15:20 ngày 20/06/2026.',
-    isRead: true,
-    createdAt: '2026-06-20T15:20:00Z',
-    referenceType: 'ViewingAppointment',
-    referenceId: '5'
-  },
-  // Tenant notifications
-  {
-    id: 'mock-t1',
-    type: 'ViewingAppointmentConfirmed',
-    title: 'Lịch hẹn xem phòng đã được xác nhận',
-    body: 'Chủ trọ Huấn Xuân đã xác nhận lịch xem phòng A01 lúc 09:00 ngày 29/06/2026.',
-    isRead: false,
-    createdAt: '2026-06-22T12:00:00Z',
-    referenceType: 'ViewingAppointment',
-    referenceId: '1'
-  },
-  {
-    id: 'mock-t2',
-    type: 'RentalRequestApproved',
-    title: 'Yêu cầu thuê phòng được phê duyệt',
-    body: 'Yêu cầu thuê phòng B02 của bạn tại Khu Trọ Xuân Huấn đã được phê duyệt. Vui lòng ký hợp đồng.',
-    isRead: false,
-    createdAt: '2026-06-22T10:15:00Z',
-    referenceType: 'RentalRequest',
-    referenceId: '2'
-  },
-  {
-    id: 'mock-t3',
-    type: 'BillingInvoice',
-    title: 'Hóa đơn thanh toán mới',
-    body: 'Bạn có hóa đơn tiền phòng tháng 6/2026 cần thanh toán trị giá 3.500.000 đ.',
-    isRead: false,
-    createdAt: '2026-06-22T08:00:00Z',
-    referenceType: 'Invoice',
-    referenceId: '3'
-  },
-  {
-    id: 'mock-t4',
-    type: 'ViewingAppointmentRejected',
-    title: 'Lịch hẹn xem phòng bị từ chối',
-    body: 'Chủ trọ đã từ chối lịch xem phòng B02 do trùng lịch.',
-    isRead: true,
-    createdAt: '2026-06-21T18:00:00Z',
-    referenceType: 'ViewingAppointment',
-    referenceId: '4'
-  }
-];
 
 function formatDateTimeString(isoString: string): string {
   const date = new Date(isoString);
@@ -117,32 +22,10 @@ function formatDateTimeString(isoString: string): string {
   return `${timeStr}  •  ${day}/${month}/${year}`;
 }
 
-function getNotificationRole(notification: Notification): 'tenant' | 'landlord' {
-  const type = notification.type;
-  const title = notification.title.toLowerCase();
-  const body = notification.body.toLowerCase();
-  
-  if (
-    type === 'NewRentalRequest' ||
-    type === 'NewViewingAppointment' ||
-    title.includes('khách thuê') ||
-    body.includes('muốn xem phòng') ||
-    body.includes('đã gửi yêu cầu thuê') ||
-    title.includes('nhận thanh toán') ||
-    body.includes('nhận được thanh toán')
-  ) {
-    return 'landlord';
-  }
-  
-  return 'tenant';
-}
-
 function getNotificationCategoryInfo(notification: Notification) {
-  const isViewingAppointment = notification.referenceType === 'ViewingAppointment' || notification.type.toLowerCase().includes('viewing') || notification.title.toLowerCase().includes('lịch hẹn');
-  const isBilling = notification.referenceType === 'Billing' || notification.referenceType === 'Invoice' || notification.referenceType === 'Payment' || notification.title.toLowerCase().includes('hóa đơn') || notification.title.toLowerCase().includes('thanh toán');
-  const isRentalRequest = notification.referenceType === 'RentalRequest' || notification.type.toLowerCase().includes('rentalrequest') || notification.title.toLowerCase().includes('yêu cầu thuê');
+  const category = getNotificationCategory(notification);
 
-  if (isRentalRequest) {
+  if (category === 'rental') {
     return {
       theme: 'orange',
       label: 'Yêu cầu thuê trọ',
@@ -155,7 +38,7 @@ function getNotificationCategoryInfo(notification: Notification) {
     };
   }
 
-  if (isViewingAppointment) {
+  if (category === 'appointment') {
     return {
       theme: 'sky',
       label: 'Lịch hẹn',
@@ -170,7 +53,7 @@ function getNotificationCategoryInfo(notification: Notification) {
     };
   }
 
-  if (isBilling) {
+  if (category === 'billing') {
     return {
       theme: 'green',
       label: 'Thanh toán',
@@ -244,7 +127,6 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [activeRole, setActiveRole] = useState<'tenant' | 'landlord'>(initialRole);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'rental' | 'appointment' | 'billing'>('all');
-  const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [limit, setLimit] = useState(15);
 
   // Sync state if URL query parameter changes
@@ -259,13 +141,9 @@ export default function NotificationsPage() {
     setLoading(true);
     try {
       const items = await getNotifications(100);
-      if (items.length === 0) {
-        setNotifications(MOCK_NOTIFICATIONS);
-      } else {
-        setNotifications(items);
-      }
+      setNotifications(items);
     } catch {
-      setNotifications(MOCK_NOTIFICATIONS);
+      setNotifications([]);
     } finally {
       setLoading(false);
     }
@@ -278,9 +156,7 @@ export default function NotificationsPage() {
   const handleMarkRead = async (notification: Notification) => {
     if (!notification.isRead) {
       try {
-        if (!notification.id.startsWith('mock-')) {
-          await markAsRead(notification.id);
-        }
+        await markAsRead(notification.id);
         setNotifications(prev =>
           prev.map(n => (n.id === notification.id ? { ...n, isRead: true } : n))
         );
@@ -289,39 +165,29 @@ export default function NotificationsPage() {
       }
     }
 
-    if (notification.id.startsWith('mock-')) return;
-    
-    const role = getNotificationRole(notification);
-    if (role === 'landlord') {
-      if (notification.referenceType === 'ViewingAppointment') {
-        navigate(ROUTE_PATHS.LANDLORD.VIEWING_APPOINTMENTS);
-      } else if (notification.referenceType === 'RentalRequest' && notification.referenceId) {
-        navigate(`/landlord/rental-requests/${notification.referenceId}`);
-      } else if ((notification.referenceType === 'Billing' || notification.referenceType === 'Invoice' || notification.referenceType === 'Payment') && notification.referenceId) {
-        navigate(`/landlord/invoices/${notification.referenceId}`);
-      }
-    } else {
-      if (notification.referenceType === 'ViewingAppointment') {
-        navigate(ROUTE_PATHS.ACCOUNT.VIEWING_APPOINTMENTS);
-      } else if (notification.referenceType === 'RentalRequest' && notification.referenceId) {
-        navigate(`/account/rental-requests/${notification.referenceId}`);
-      } else if ((notification.referenceType === 'Billing' || notification.referenceType === 'Invoice' || notification.referenceType === 'Payment') && notification.referenceId) {
-        navigate(`/account/invoices/${notification.referenceId}`);
-      }
-    }
+    navigate(getNotificationLink(notification));
   };
 
   const handleMarkAllRead = async () => {
     try {
-      const hasMock = notifications.some(n => n.id.startsWith('mock-'));
-      if (hasMock) {
-        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-      } else {
-        await markAllAsRead();
-        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-      }
+      await markAllAsRead();
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     } catch {
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    }
+  };
+
+  const handleDeleteNotification = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+
+    // Always remove from local state first
+    setNotifications(prev => prev.filter(n => n.id !== id));
+
+    // Real notification: call API
+    try {
+      await deleteNotification(id);
+    } catch {
+      console.error('Xoá thông báo trên server thất bại');
     }
   };
 
@@ -333,23 +199,15 @@ export default function NotificationsPage() {
   const unreadCount = roleNotifications.filter(n => !n.isRead).length;
   
   const rentalCount = roleNotifications.filter(n => 
-    n.referenceType === 'RentalRequest' || 
-    n.type.toLowerCase().includes('rentalrequest') || 
-    n.title.toLowerCase().includes('yêu cầu thuê')
+    getNotificationCategory(n) === 'rental'
   ).length;
 
   const appointmentCount = roleNotifications.filter(n => 
-    n.referenceType === 'ViewingAppointment' || 
-    n.type.toLowerCase().includes('viewing') || 
-    n.title.toLowerCase().includes('lịch hẹn')
+    getNotificationCategory(n) === 'appointment'
   ).length;
 
   const billingCount = roleNotifications.filter(n => 
-    n.referenceType === 'Billing' || 
-    n.referenceType === 'Invoice' || 
-    n.referenceType === 'Payment' || 
-    n.title.toLowerCase().includes('hóa đơn') || 
-    n.title.toLowerCase().includes('thanh toán')
+    getNotificationCategory(n) === 'billing'
   ).length;
 
   const getFilteredItems = () => {
@@ -359,28 +217,16 @@ export default function NotificationsPage() {
       filtered = filtered.filter(n => !n.isRead);
     } else if (activeTab === 'rental') {
       filtered = filtered.filter(n => 
-        n.referenceType === 'RentalRequest' || 
-        n.type.toLowerCase().includes('rentalrequest') || 
-        n.title.toLowerCase().includes('yêu cầu thuê')
+        getNotificationCategory(n) === 'rental'
       );
     } else if (activeTab === 'appointment') {
       filtered = filtered.filter(n => 
-        n.referenceType === 'ViewingAppointment' || 
-        n.type.toLowerCase().includes('viewing') || 
-        n.title.toLowerCase().includes('lịch hẹn')
+        getNotificationCategory(n) === 'appointment'
       );
     } else if (activeTab === 'billing') {
       filtered = filtered.filter(n => 
-        n.referenceType === 'Billing' || 
-        n.referenceType === 'Invoice' || 
-        n.referenceType === 'Payment' || 
-        n.title.toLowerCase().includes('hóa đơn') || 
-        n.title.toLowerCase().includes('thanh toán')
+        getNotificationCategory(n) === 'billing'
       );
-    }
-    
-    if (showUnreadOnly) {
-      filtered = filtered.filter(n => !n.isRead);
     }
     
     return filtered;
@@ -423,13 +269,6 @@ export default function NotificationsPage() {
             </div>
           </div>
           <div className="notifications-header-actions">
-            <button className="notifications-settings-btn" type="button" onClick={() => alert('Chức năng cài đặt thông báo đang được phát triển.')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span>Cài đặt</span>
-            </button>
             {unreadCount > 0 && (
               <button className="notifications-mark-read-btn" type="button" onClick={handleMarkAllRead}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -531,33 +370,6 @@ export default function NotificationsPage() {
                 <div key={dateKey} className="notifications-date-group">
                   <header className="notifications-list-section-header">
                     <span className="notifications-date-group-title">{dateKey}</span>
-                    {dateKey === 'Hôm nay' && (
-                      <div className="notifications-filter-controls">
-                        <label className="unread-toggle-wrapper">
-                          <span className="unread-toggle-label">Chỉ hiển thị chưa đọc</span>
-                          <input
-                            type="checkbox"
-                            className="toggle-switch-input"
-                            checked={showUnreadOnly}
-                            onChange={(e) => setShowUnreadOnly(e.target.checked)}
-                          />
-                          <div className="toggle-switch-slider" />
-                        </label>
-                        <button className="notifications-filter-icon-btn" type="button">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="4" y1="21" x2="4" y2="14" />
-                            <line x1="4" y1="10" x2="4" y2="3" />
-                            <line x1="12" y1="21" x2="12" y2="12" />
-                            <line x1="12" y1="8" x2="12" y2="3" />
-                            <line x1="20" y1="21" x2="20" y2="16" />
-                            <line x1="20" y1="12" x2="20" y2="3" />
-                            <line x1="1" y1="14" x2="7" y2="14" />
-                            <line x1="9" y1="8" x2="15" y2="8" />
-                            <line x1="17" y1="16" x2="23" y2="16" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
                   </header>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -580,7 +392,20 @@ export default function NotificationsPage() {
                           <span className={`notification-category-tag ${info.theme}`}>
                             {info.label}
                           </span>
-                          <div className={`notification-card-unread-indicator ${!item.isRead ? 'active' : 'inactive'}`} />
+                          <button
+                            className="notification-delete-btn"
+                            type="button"
+                            onClick={(e) => handleDeleteNotification(e, item.id)}
+                            title="Xóa thông báo"
+                            aria-label="Xóa thông báo"
+                          >
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              <line x1="10" y1="11" x2="10" y2="17" />
+                              <line x1="14" y1="11" x2="14" y2="17" />
+                            </svg>
+                          </button>
                         </div>
                       );
                     })}

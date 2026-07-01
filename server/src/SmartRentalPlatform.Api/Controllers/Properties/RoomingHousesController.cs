@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SmartRentalPlatform.Api.Extensions;
 using SmartRentalPlatform.Application.Common.Interfaces;
 using SmartRentalPlatform.Application.RoomingHouses;
 using SmartRentalPlatform.Contracts.Amenities;
@@ -319,6 +320,18 @@ public class RoomingHousesController : ControllerBase
     }
 
     [Authorize]
+    [HttpPost("{id:guid}/rule/preview")]
+    public async Task<IActionResult> PreviewRule(
+        Guid id,
+        UpsertRoomingHouseRuleRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        var pdfStream = await roomingHouseRuleService.PreviewRuleAsync(id, userId, request, cancellationToken);
+        return File(pdfStream, "application/pdf", $"house-rule-preview-{id:N}.pdf");
+    }
+
+    [Authorize]
     [HttpGet("{id:guid}/service-prices")]
     public async Task<ActionResult<ApiResponse<List<ServicePriceResponse>>>> GetServicePrices(
         Guid id,
@@ -353,12 +366,7 @@ public class RoomingHousesController : ControllerBase
 
     private Guid GetCurrentUserId()
     {
-        if (!currentUserService.IsAuthenticated || currentUserService.UserId is null)
-        {
-            throw new UnauthorizedAccessException("Không tìm thấy mã người dùng đã đăng nhập.");
-        }
-
-        return currentUserService.UserId.Value;
+        return currentUserService.GetRequiredUserId("Không tìm thấy mã người dùng đã đăng nhập.");
     }
 
     private async Task<ActionResult<ApiResponse<RoomingHouseDetailResponse>>?> EnsureOwnerAsync(
