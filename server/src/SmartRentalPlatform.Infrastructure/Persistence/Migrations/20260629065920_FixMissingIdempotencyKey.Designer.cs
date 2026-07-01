@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SmartRentalPlatform.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using SmartRentalPlatform.Infrastructure.Persistence;
 namespace SmartRentalPlatform.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260629065920_FixMissingIdempotencyKey")]
+    partial class FixMissingIdempotencyKey
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -34457,75 +34460,61 @@ namespace SmartRentalPlatform.Infrastructure.Persistence.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
+                        .HasColumnType("uuid");
 
                     b.Property<string>("AccountName")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("account_name");
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("AccountNumber")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("account_number");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<decimal>("Amount")
                         .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("amount");
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("BankBin")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("bank_bin");
+                        .HasColumnType("character varying(50)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Description")
                         .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
-                        .HasColumnName("description");
+                        .HasColumnType("character varying(500)");
 
                     b.Property<decimal>("Fee")
                         .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("fee");
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("idempotency_key");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ProviderOrderCode")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("provider_order_code");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ProviderTransactionCode")
-                        .HasColumnType("text")
-                        .HasColumnName("provider_transaction_code");
+                        .HasColumnType("text");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("status");
+                        .HasColumnType("character varying(50)");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("WalletAccountId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("wallet_account_id");
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -34544,33 +34533,27 @@ namespace SmartRentalPlatform.Infrastructure.Persistence.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Payload")
                         .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("payload");
+                        .HasColumnType("text");
 
                     b.Property<string>("ProviderOrderCode")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("provider_order_code");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<DateTimeOffset>("ReceivedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("received_at");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("status");
+                        .HasColumnType("character varying(50)");
 
                     b.Property<Guid>("WithdrawalRequestId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("withdrawal_request_id");
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 

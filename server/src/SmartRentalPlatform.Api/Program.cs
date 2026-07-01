@@ -36,7 +36,7 @@ if (app.Environment.IsDevelopment())
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var passwordService = scope.ServiceProvider.GetRequiredService<IPasswordService>();
     await DevelopmentDataSeed.SeedAdminAsync(dbContext, passwordService);
-    await DevelopmentDataSeed.SeedAsync(dbContext, passwordService);
+    await DevelopmentDataSeed.SeedAsync(dbContext, passwordService, app.Configuration);
 }
 
 if (app.Environment.IsDevelopment()

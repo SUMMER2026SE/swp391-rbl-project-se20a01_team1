@@ -81,6 +81,10 @@ public interface IAppDbContext {
 
     DbSet<PaymentWebhookLog> PaymentWebhookLogs { get; }
 
+    DbSet<WithdrawalRequest> WithdrawalRequests { get; }
+
+    DbSet<WithdrawalWebhookLog> WithdrawalWebhookLogs { get; }
+
     DbSet<BillingServiceType> BillingServiceTypes { get; }
 
     DbSet<RoomingHouseServicePrice> RoomingHouseServicePrices { get; }
@@ -101,4 +105,6 @@ public interface IAppDbContext {
     Task<IAppDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+
+    bool HasActiveTransaction { get; }
 }

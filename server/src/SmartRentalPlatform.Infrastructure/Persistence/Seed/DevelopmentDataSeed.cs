@@ -59,6 +59,7 @@ public static class DevelopmentDataSeed
     public static async Task SeedAsync(
         AppDbContext context,
         IPasswordService passwordService,
+        Microsoft.Extensions.Configuration.IConfiguration configuration,
         CancellationToken cancellationToken = default)
     {
         var location = await GetSeedLocationAsync(context, cancellationToken);
@@ -73,6 +74,7 @@ public static class DevelopmentDataSeed
         await SeedRoomingHousesAsync(context, location, cancellationToken);
         await SeedRoomsAsync(context, cancellationToken);
         await LargeScaleRoomingHouseSeeder.SeedAsync(context, cancellationToken);
+        await SeedTestPayOsUserAsync(context, passwordService, configuration, cancellationToken);
         // await SeedAdditionalRoomsAsync(context, cancellationToken);
         // await SeedBillingAsync(context, cancellationToken);
     }
@@ -938,4 +940,84 @@ public static class DevelopmentDataSeed
         string ProvinceName,
         string WardCode,
         string WardName);
+
+    private static async Task SeedTestPayOsUserAsync(
+        AppDbContext context,
+        IPasswordService passwordService,
+        Microsoft.Extensions.Configuration.IConfiguration configuration,
+        CancellationToken cancellationToken = default)
+    {
+        var testEmail = configuration["Seed:TestUserEmail"];
+        var testFullName = configuration["Seed:TestUserFullName"];
+        var testSeededAt = DateTimeOffset.UtcNow;
+
+        if (string.IsNullOrEmpty(testEmail) || string.IsNullOrEmpty(testFullName))
+        {
+            return;
+        }
+
+        var existingUser = await context.Users.FirstOrDefaultAsync(u => u.Email == testEmail, cancellationToken);
+        if (existingUser != null)
+        {
+            // If the user already exists, update their password hash to the correct one
+            existingUser.PasswordHash = passwordService.HashPassword(DemoPassword);
+            context.Users.Update(existingUser);
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            var testUserId = Guid.NewGuid();
+
+            var testUser = CreateUser(testUserId, testEmail, testFullName, passwordService);
+            testUser.CreatedAt = testSeededAt;
+            testUser.UpdatedAt = testSeededAt;
+            
+            context.Users.Add(testUser);
+
+            context.UserProfiles.Add(new UserProfile
+            {
+                UserId = testUserId,
+                FullName = testFullName,
+                CreatedAt = testSeededAt,
+                UpdatedAt = testSeededAt
+            });
+
+            context.KycVerifications.Add(new KycVerification
+            {
+                Id = Guid.NewGuid(),
+                UserId = testUserId,
+                OcrFullName = testFullName,
+                Status = SmartRentalPlatform.Domain.Enums.Kyc.KycVerificationStatus.Approved,
+                RiskLevel = SmartRentalPlatform.Domain.Enums.Kyc.KycRiskLevel.Low,
+                SubmittedAt = testSeededAt,
+                ReviewedAt = testSeededAt,
+                CreatedAt = testSeededAt,
+                UpdatedAt = testSeededAt
+            });
+
+            context.WalletAccounts.Add(new WalletAccount
+            {
+                Id = Guid.NewGuid(),
+                UserId = testUserId,
+                Balance = 500000m,
+                ReservedBalance = 0m,
+                Currency = "VND",
+                Status = SmartRentalPlatform.Domain.Enums.Payments.WalletAccountStatus.Active,
+                CreatedAt = testSeededAt,
+                UpdatedAt = testSeededAt
+            });
+
+            var testRole = await context.Roles.FirstOrDefaultAsync(r => r.Name == SmartRentalPlatform.Domain.Enums.Users.RoleName.Landlord, cancellationToken);
+            if (testRole != null)
+            {
+                context.UserRoles.Add(new UserRole
+                {
+                    UserId = testUserId,
+                    RoleId = testRole.Id
+                });
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+        }
+    }
 }

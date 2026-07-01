@@ -30,7 +30,10 @@ public static class DependencyInjection
 
         services.AddDbContext<AppDbContext>(options =>
         {
-            options.UseNpgsql(connectionString);
+            options.UseNpgsql(connectionString, builder =>
+            {
+                builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+            });
         });
 
         services.AddScoped<IAppDbContext>(provider =>
@@ -67,6 +70,8 @@ public static class DependencyInjection
         services.AddHostedService<RentalContractExpirationWorker>();
         services.AddHostedService<RentalContractMoveInActivationWorker>();
         services.AddHostedService<ContractAppendixApplicationWorker>();
+        services.AddHostedService<WithdrawalStatusSyncWorker>();
+        services.Configure<SmartRentalPlatform.Application.Wallets.Options.WithdrawalOptions>(configuration.GetSection(SmartRentalPlatform.Application.Wallets.Options.WithdrawalOptions.SectionName));
         services.Configure<PayOSOptions>(configuration.GetSection(PayOSOptions.SectionName));
         services.AddHttpClient(PayOSClient.HttpClientName, (provider, client) =>
         {

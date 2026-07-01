@@ -59,210 +59,210 @@ namespace SmartRentalPlatform.Infrastructure.Persistence.Seed
                 "20000000-0000-0000-0000-000000000005", // PendingHouseId (Nhà trọ Garden Pending)
                 "20000000-0000-0000-0000-000000000006"  // RejectedHouseId (Nhà trọ Old Town)
             };
-            var defaultHouseIdsCsv = string.Join(",", defaultHouseGuids.Select(id => $"'{id}'"));
+            var defaultHouseGuidsArray = defaultHouseGuids.Select(Guid.Parse).ToArray();
 
             // Thực hiện xóa nhanh bằng Raw SQL để tránh tràn tham số (Parameter Overflow) và nâng cao hiệu năng
             // 1. contract_appendix_changes
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM contract_appendix_changes 
                 WHERE appendix_id IN (
                     SELECT id FROM contract_appendices 
                     WHERE contract_id IN (
                         SELECT id FROM contracts 
                         WHERE room_id IN (
-                            SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                            SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                         )
                     )
                 )
             ", cancellationToken);
 
             // 2. contract_appendices
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM contract_appendices 
                 WHERE contract_id IN (
                     SELECT id FROM contracts 
                     WHERE room_id IN (
-                        SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                        SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                     )
                 )
             ", cancellationToken);
 
             // 3. contract_signatures
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM contract_signatures 
                 WHERE contract_id IN (
                     SELECT id FROM contracts 
                     WHERE room_id IN (
-                        SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                        SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                     )
                 )
             ", cancellationToken);
 
             // 4. contract_files
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM contract_files 
                 WHERE contract_id IN (
                     SELECT id FROM contracts 
                     WHERE room_id IN (
-                        SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                        SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                     )
                 )
             ", cancellationToken);
 
             // 5. contract_occupant_documents
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM contract_occupant_documents 
                 WHERE contract_occupant_id IN (
                     SELECT id FROM contract_occupants 
                     WHERE contract_id IN (
                         SELECT id FROM contracts 
                         WHERE room_id IN (
-                            SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                            SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                         )
                     )
                 )
             ", cancellationToken);
 
             // 6. contract_occupants
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM contract_occupants 
                 WHERE contract_id IN (
                     SELECT id FROM contracts 
                     WHERE room_id IN (
-                        SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                        SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                     )
                 )
             ", cancellationToken);
 
             // 7. invoice_items
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM invoice_items 
                 WHERE invoice_id IN (
                     SELECT id FROM invoices 
                     WHERE room_id IN (
-                        SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                        SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                     )
                 )
             ", cancellationToken);
 
             // 8. invoices
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM invoices 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // 9. contracts
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM contracts 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // 10. room_deposits
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM room_deposits 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // 11. rental_requests
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rental_requests 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // 12. viewing_appointments
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM viewing_appointments 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // 13. meter_readings
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM meter_readings 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // Xóa property_images liên quan đến phòng
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM property_images 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // Xóa property_images liên quan đến khu trọ
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM property_images 
-                WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Xóa room_amenities
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM room_amenities 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // Xóa room_price_tiers
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM room_price_tiers 
                 WHERE room_id IN (
-                    SELECT id FROM rooms WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                    SELECT id FROM rooms WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
                 )
             ", cancellationToken);
 
             // Xóa rooms
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rooms 
-                WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Xóa rooming_house_amenities
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rooming_house_amenities 
-                WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Xóa rooming_house_legal_documents
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rooming_house_legal_documents 
-                WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Xóa rental_policies
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rental_policies 
-                WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Xóa rooming_house_rules
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rooming_house_rules 
-                WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Xóa rooming_house_service_prices
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rooming_house_service_prices 
-                WHERE rooming_house_id NOT IN ({defaultHouseIdsCsv})
+                WHERE rooming_house_id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Xóa rooming_houses
-            await context.Database.ExecuteSqlRawAsync($@"
+            await context.Database.ExecuteSqlAsync($@"
                 DELETE FROM rooming_houses 
-                WHERE id NOT IN ({defaultHouseIdsCsv})
+                WHERE id != ALL({defaultHouseGuidsArray})
             ", cancellationToken);
 
             // Kiểm tra số lượng khu trọ hiện tại

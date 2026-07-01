@@ -50,6 +50,8 @@ public class AppDbContext : DbContext, IAppDbContext
     public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
     public DbSet<PaymentTransaction> PaymentTransactions => Set<PaymentTransaction>();
     public DbSet<PaymentWebhookLog> PaymentWebhookLogs => Set<PaymentWebhookLog>();
+    public DbSet<WithdrawalRequest> WithdrawalRequests => Set<WithdrawalRequest>();
+    public DbSet<WithdrawalWebhookLog> WithdrawalWebhookLogs => Set<WithdrawalWebhookLog>();
     // Billing
     public DbSet<BillingServiceType> BillingServiceTypes => Set<BillingServiceType>();
     public DbSet<RoomingHouseServicePrice> RoomingHouseServicePrices => Set<RoomingHouseServicePrice>();
@@ -73,6 +75,8 @@ public class AppDbContext : DbContext, IAppDbContext
     public DbSet<ContractFile> ContractFiles => Set<ContractFile>();
     public DbSet<ContractSignature> ContractSignatures => Set<ContractSignature>();
 
+
+    public bool HasActiveTransaction => Database.CurrentTransaction != null;
 
     public async Task<IAppDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {

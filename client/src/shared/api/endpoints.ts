@@ -27,6 +27,10 @@ export const ENDPOINTS = {
     TOP_UP_BY_ID: (id: string) => `/api/me/wallet/topups/${id}`,
     CREATE_PAYOS_TOPUP: '/api/me/wallet/topups/payos'
   },
+  WITHDRAWALS: {
+    ROOT: '/api/v1/withdrawals',
+    MY: '/api/v1/withdrawals/my'
+  },
   KYC: {
     SUBMISSIONS: '/api/kyc/submissions',
     MY_STATUS: '/api/kyc/my-status',

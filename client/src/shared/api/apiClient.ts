@@ -51,11 +51,17 @@ async function sendRequest(path: string, options: RequestOptions = {}) {
       headers.set('Authorization', `Bearer ${accessToken}`);
     }
   }
+  let finalBody: BodyInit | null | undefined = undefined;
+  if (requestBody instanceof FormData || typeof requestBody === 'string') {
+    finalBody = requestBody as BodyInit;
+  } else if (requestBody) {
+    finalBody = JSON.stringify(requestBody);
+  }
 
   return fetch(`${env.apiBaseUrl}${path}`, {
     ...options,
     headers,
-    body: requestBody
+    body: finalBody
   });
 }
 

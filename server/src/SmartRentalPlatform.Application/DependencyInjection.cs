@@ -65,6 +65,8 @@ public static class DependencyInjection
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<IPayOSTopUpService, PayOSTopUpService>();
         services.AddScoped<IPaymentWebhookService, PaymentWebhookService>();
+        services.AddScoped<IWithdrawalService, WithdrawalService>();
+        services.AddScoped<IWithdrawalWebhookService, WithdrawalWebhookService>();
         services.AddScoped<IMockPaymentService, MockPaymentService>();
         services.AddScoped<IBillingContractReadService, ContractBillingReadService>();
         services.AddScoped<IInvoiceWalletPaymentService, InvoiceWalletPaymentService>();

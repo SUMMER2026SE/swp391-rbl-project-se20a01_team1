@@ -89,3 +89,25 @@ export interface WalletTopUpResponse {
   gatewayResponseCode?: string | null;
   gatewayResponseMessage?: string | null;
 }
+
+export interface WithdrawalRequest {
+  amount: number;
+  bankBin: string;
+  accountNumber: string;
+  accountName: string;
+}
+
+export interface WithdrawalRequestResponse {
+  id: string;
+  walletAccountId: string;
+  amount: number;
+  fee: number;
+  status: string;
+  providerOrderCode: string;
+  bankBin: string;
+  accountName: string;
+  accountNumber: string;
+  description?: string;
+  createdAt: string;
+  updatedAt?: string;
+}

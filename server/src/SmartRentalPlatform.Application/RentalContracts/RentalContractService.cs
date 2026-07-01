@@ -71,7 +71,7 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<ContractDetailResponse?> GetByIdAsync(Guid userId, Guid contractId, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -84,7 +84,7 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<ContractDetailResponse?> GetActiveContractByRoomIdAsync(Guid landlordUserId, Guid roomId, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.RoomId == roomId && x.DeletedAt == null && (int)x.Status == 9 && x.Room.RoomingHouse.LandlordUserId == landlordUserId, cancellationToken);
+		RentalContract? contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.RoomId == roomId && x.DeletedAt == null && (int)x.Status == 9 && x.Room.RoomingHouse.LandlordUserId == landlordUserId, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -95,7 +95,7 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<IReadOnlyCollection<ContractOccupantResponse>?> GetActiveTenantsByRoomIdAsync(Guid landlordUserId, Guid roomId, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.RoomId == roomId && x.DeletedAt == null && (int)x.Status == 9 && x.Room.RoomingHouse.LandlordUserId == landlordUserId, cancellationToken);
+		RentalContract? contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.RoomId == roomId && x.DeletedAt == null && (int)x.Status == 9 && x.Room.RoomingHouse.LandlordUserId == landlordUserId, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -137,14 +137,14 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<ContractPreviewPdfResult?> GetPreviewPdfAsync(Guid userId, Guid contractId, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
 		}
 		EnsureContractCanPreview(contract);
-		ContractPreviewViewerAccess viewerAccess = ResolvePreviewViewerAccess(userId, contract);
-		if ((object)viewerAccess == null)
+		ContractPreviewViewerAccess? viewerAccess = ResolvePreviewViewerAccess(userId, contract);
+		if (viewerAccess == null)
 		{
 			throw new ForbiddenException("RENTAL_CONTRACT_FORBIDDEN", "Bạn không có quyền xem bản xem trước hợp đồng này.", new { contract.Id });
 		}
@@ -156,7 +156,7 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<ContractDetailResponse?> SubmitOccupantsAsync(Guid tenantUserId, Guid contractId, SubmitContractOccupantsRequest request, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -165,7 +165,7 @@ public class RentalContractService : IRentalContractService
 		EnsureCanSubmitOccupants(contract);
 		ValidateOccupantsRequest(contract.MainTenantUser.Email, request, GetSnapshotMaxOccupants(contract));
 		Dictionary<string, VerifiedOccupantAccount> verifiedAccounts = await ValidateOccupantAccountsAsync(request, cancellationToken);
-		ContractDetailResponse result;
+		ContractDetailResponse? result;
 		await using (IAppDbContextTransaction transaction = await context.BeginTransactionAsync(cancellationToken))
 		{
 			try
@@ -178,17 +178,17 @@ public class RentalContractService : IRentalContractService
 				List<(ContractOccupant Occupant, string GuardianClientReferenceId)> pendingGuardianLinks = new List<(ContractOccupant, string)>();
 				foreach (ContractOccupantRequest occupantRequest in request.Occupants)
 				{
-					string emailKey = occupantRequest.Email?.Trim().ToLowerInvariant();
-					VerifiedOccupantAccount account;
-					VerifiedOccupantAccount verifiedAccount = ((!string.IsNullOrEmpty(emailKey) && verifiedAccounts.TryGetValue(emailKey, out account)) ? account : null);
+					string? emailKey = occupantRequest.Email?.Trim().ToLowerInvariant();
+					VerifiedOccupantAccount? account;
+					VerifiedOccupantAccount? verifiedAccount = ((!string.IsNullOrEmpty(emailKey) && verifiedAccounts.TryGetValue(emailKey, out account)) ? account : null);
 					ContractOccupant occupant = new ContractOccupant
 					{
 						Id = Guid.NewGuid(),
 						RentalContractId = contract.Id,
 						UserId = verifiedAccount?.UserId,
-						FullName = (verifiedAccount?.FullName ?? occupantRequest.FullName.Trim()),
+						FullName = (verifiedAccount?.FullName ?? occupantRequest.FullName?.Trim() ?? string.Empty),
 						PhoneNumber = (verifiedAccount?.PhoneNumber ?? NormalizeOptionalText(occupantRequest.PhoneNumber)),
-						DateOfBirth = (verifiedAccount?.DateOfBirth ?? occupantRequest.DateOfBirth.Value),
+						DateOfBirth = (verifiedAccount?.DateOfBirth ?? occupantRequest.DateOfBirth ?? default),
 						RelationshipToMainTenant = NormalizeOptionalText(occupantRequest.RelationshipToMainTenant),
 						MoveInDate = occupantRequest.MoveInDate,
 						MoveOutDate = occupantRequest.MoveOutDate,
@@ -230,7 +230,7 @@ public class RentalContractService : IRentalContractService
 				}
 				foreach (var (occupant2, guardianClientReferenceId) in pendingGuardianLinks)
 				{
-					if (!createdByClientReference.TryGetValue(guardianClientReferenceId, out ContractOccupant guardian))
+					if (!createdByClientReference.TryGetValue(guardianClientReferenceId, out ContractOccupant? guardian))
 					{
 						throw new BadRequestException("RENTAL_CONTRACT_INVALID_OCCUPANT", "Không tìm thấy người bảo hộ trong danh sách người ở.", new { guardianClientReferenceId });
 					}
@@ -256,14 +256,14 @@ public class RentalContractService : IRentalContractService
 	public async Task<ContractDetailResponse?> UpdateTermsAsync(Guid landlordUserId, Guid contractId, UpdateContractTermsRequest request, CancellationToken cancellationToken = default(CancellationToken))
 	{
 		ValidateTermsRequest(request);
-		RentalContract contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
 		}
 		EnsureLandlord(landlordUserId, contract);
 		EnsureStatus(contract, RentalContractStatus.TenantRevisionRequested);
-		RentalPolicy rentalPolicy = await context.RentalPolicies.AsNoTracking().FirstOrDefaultAsync((RentalPolicy x) => x.RoomingHouseId == contract.Room.RoomingHouseId && x.IsActive, cancellationToken);
+		RentalPolicy? rentalPolicy = await context.RentalPolicies.AsNoTracking().FirstOrDefaultAsync((RentalPolicy x) => x.RoomingHouseId == contract.Room.RoomingHouseId && x.IsActive, cancellationToken);
 		if (rentalPolicy == null)
 		{
 			throw new ConflictException("RENTAL_POLICY_REQUIRED", "Khu trọ chưa cấu hình chính sách thuê.", new { contract.Room.RoomingHouseId });
@@ -287,7 +287,7 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<ContractDetailResponse?> LandlordSignAsync(Guid landlordUserId, Guid contractId, SignContractRequest request, string? ipAddress, string? userAgent, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -297,7 +297,7 @@ public class RentalContractService : IRentalContractService
 		EnsureNotSigned(contract, ContractSignerRole.Landlord);
 		DateTimeOffset now = DateTimeOffset.UtcNow;
 		EnsureContractStartDateAllowsLandlordSignature(contract.StartDate, now);
-		ContractDetailResponse result;
+		ContractDetailResponse? result;
 		await using (IAppDbContextTransaction transaction = await context.BeginTransactionAsync(cancellationToken))
 		{
 			try
@@ -306,7 +306,7 @@ public class RentalContractService : IRentalContractService
 				context.ContractSignatures.Add(CreateSignature(contract.Id, landlordUserId, ContractSignerRole.Landlord, request, ipAddress, userAgent, now));
 				if (await context.RentalContracts.Where((RentalContract x) => x.Id == contractId && x.DeletedAt == null && ((int)x.Status == 2 || (int)x.Status == 5)).ExecuteUpdateAsync(delegate(UpdateSettersBuilder<RentalContract> setters)
 				{
-					setters.SetProperty((RentalContract x) => x.Status, RentalContractStatus.PendingTenantSignature).SetProperty((Expression<Func<RentalContract, string>>)((RentalContract x) => x.StatusReason), (string)null).SetProperty((RentalContract x) => x.SignatureDeadlineAt, now.Add(TenantSignatureTtl))
+					setters.SetProperty((RentalContract x) => x.Status, RentalContractStatus.PendingTenantSignature).SetProperty((Expression<Func<RentalContract, string?>>)((RentalContract x) => x.StatusReason), (string?)null).SetProperty((RentalContract x) => x.SignatureDeadlineAt, now.Add(TenantSignatureTtl))
 						.SetProperty((RentalContract x) => x.UpdatedAt, now);
 				}, cancellationToken) == 0)
 				{
@@ -327,7 +327,7 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<ContractDetailResponse?> TenantSignAsync(Guid tenantUserId, Guid contractId, SignContractRequest request, string? ipAddress, string? userAgent, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().AsNoTracking().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -340,7 +340,7 @@ public class RentalContractService : IRentalContractService
 		EnsureTenantCanSignBeforeStartDate(contract.StartDate, today);
 		EnsureTenantSignatureDeadlineNotExpired(contract, now);
 		RoomStatus roomStatusAfterSigning = contract.StartDate <= today ? RoomStatus.Occupied : RoomStatus.Reserved;
-		ContractDetailResponse result;
+		ContractDetailResponse? result;
 		await using (IAppDbContextTransaction transaction = await context.BeginTransactionAsync(cancellationToken))
 		{
 			try
@@ -349,7 +349,7 @@ public class RentalContractService : IRentalContractService
 				context.ContractSignatures.Add(CreateSignature(contract.Id, tenantUserId, ContractSignerRole.Tenant, request, ipAddress, userAgent, now));
 				if (await context.RentalContracts.Where((RentalContract x) => x.Id == contractId && x.DeletedAt == null && (int)x.Status == 4).ExecuteUpdateAsync(delegate(UpdateSettersBuilder<RentalContract> setters)
 				{
-					setters.SetProperty((RentalContract x) => x.Status, RentalContractStatus.Active).SetProperty((Expression<Func<RentalContract, string>>)((RentalContract x) => x.StatusReason), (string)null).SetProperty((Expression<Func<RentalContract, DateTimeOffset?>>)((RentalContract x) => x.SignatureDeadlineAt), (DateTimeOffset?)null)
+					setters.SetProperty((RentalContract x) => x.Status, RentalContractStatus.Active).SetProperty((Expression<Func<RentalContract, string?>>)((RentalContract x) => x.StatusReason), (string?)null).SetProperty((Expression<Func<RentalContract, DateTimeOffset?>>)((RentalContract x) => x.SignatureDeadlineAt), (DateTimeOffset?)null)
 						.SetProperty((RentalContract x) => x.ActivatedAt, now)
 						.SetProperty((RentalContract x) => x.UpdatedAt, now);
 				}, cancellationToken) == 0)
@@ -391,7 +391,7 @@ public class RentalContractService : IRentalContractService
 	public async Task<ContractDetailResponse?> RejectAsync(Guid userId, Guid contractId, RejectContractRequest request, CancellationToken cancellationToken = default(CancellationToken))
 	{
 		string reason = NormalizeRequiredReason(request.Reason);
-		RentalContract contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -494,7 +494,7 @@ public class RentalContractService : IRentalContractService
 	public async Task<ContractDetailResponse?> RequestRevisionAsync(Guid userId, Guid contractId, RequestContractRevisionRequest request, CancellationToken cancellationToken = default(CancellationToken))
 	{
 		string reason = NormalizeRequiredReason(request.Reason);
-		RentalContract contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -542,7 +542,7 @@ public class RentalContractService : IRentalContractService
 
 	public async Task<ContractDetailResponse?> TerminateAsync(Guid userId, Guid contractId, TerminateContractRequest request, CancellationToken cancellationToken = default(CancellationToken))
 	{
-		RentalContract contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
+		RentalContract? contract = await BaseQuery().FirstOrDefaultAsync((RentalContract x) => x.Id == contractId && x.DeletedAt == null, cancellationToken);
 		if (contract == null)
 		{
 			return null;
@@ -981,16 +981,16 @@ public class RentalContractService : IRentalContractService
 	private IQueryable<RentalContract> BaseQuery()
 	{
 		return context.RentalContracts.Include((RentalContract x) => x.RentalRequest).Include((RentalContract x) => x.RoomDeposit).Include((RentalContract x) => x.MainTenantUser)
-			.ThenInclude((User x) => x.UserProfile)
+			.ThenInclude((User? x) => x!.UserProfile)
 			.Include((RentalContract x) => x.Room)
 			.ThenInclude((Room x) => x.RoomingHouse)
 			.ThenInclude((RoomingHouse x) => x.Landlord)
-			.ThenInclude((User x) => x.UserProfile)
+			.ThenInclude((User? x) => x!.UserProfile)
 			.Include((RentalContract x) => x.Occupants)
 			.ThenInclude((ContractOccupant x) => x.Documents)
 			.Include((RentalContract x) => x.Occupants)
 			.ThenInclude((ContractOccupant x) => x.User)
-			.ThenInclude((User x) => x.UserProfile)
+			.ThenInclude((User? x) => x!.UserProfile)
 			.Include((RentalContract x) => x.Appendices)
 			.ThenInclude((ContractAppendix x) => x.Changes)
 			.Include((RentalContract x) => x.Signatures);
@@ -998,12 +998,12 @@ public class RentalContractService : IRentalContractService
 
 	private async Task<ContractRenderOptions> BuildPreviewRenderOptionsAsync(RentalContract contract, ContractPreviewViewerAccess viewerAccess, CancellationToken cancellationToken)
 	{
-		IReadOnlyDictionary<Guid, string?> readOnlyDictionary = ((!viewerAccess.ShowFullDocumentNumbers) ? new Dictionary<Guid, string>() : (await GetDecryptedUserDocumentNumbersAsync(contract, cancellationToken)));
+		IReadOnlyDictionary<Guid, string?> readOnlyDictionary = ((!viewerAccess.ShowFullDocumentNumbers) ? new Dictionary<Guid, string?>() : (await GetDecryptedUserDocumentNumbersAsync(contract, cancellationToken)));
 		IReadOnlyDictionary<Guid, string?> userDocumentNumbersByUserId = readOnlyDictionary;
 		IReadOnlyDictionary<Guid, string?> readOnlyDictionary3;
 		if (!viewerAccess.ShowFullDocumentNumbers)
 		{
-			IReadOnlyDictionary<Guid, string> readOnlyDictionary2 = new Dictionary<Guid, string>();
+			IReadOnlyDictionary<Guid, string?> readOnlyDictionary2 = new Dictionary<Guid, string?>();
 			readOnlyDictionary3 = readOnlyDictionary2;
 		}
 		else
@@ -1030,7 +1030,7 @@ public class RentalContractService : IRentalContractService
 		};
 		foreach (Guid occupantUserId in from x in contract.Occupants
 			where x.UserId.HasValue
-			select x.UserId.Value)
+			select x.UserId ?? Guid.Empty)
 		{
 			userIds.Add(occupantUserId);
 		}
@@ -1045,7 +1045,7 @@ public class RentalContractService : IRentalContractService
 				DocumentNumber = DecryptDocumentNumber(x.DocumentNumberEncrypted)
 			} into x
 			where !string.IsNullOrWhiteSpace(x.DocumentNumber)
-			select x).ToDictionary(x => x.UserId, x => x.DocumentNumber);
+			select x).ToDictionary(x => x.UserId, x => (string?)x.DocumentNumber);
 	}
 
 	private IReadOnlyDictionary<Guid, string?> GetDecryptedOccupantDocumentNumbers(RentalContract contract)
@@ -1057,7 +1057,7 @@ public class RentalContractService : IRentalContractService
 				DocumentNumber = DecryptDocumentNumber(x.DocumentNumberEncrypted)
 			} into x
 			where !string.IsNullOrWhiteSpace(x.DocumentNumber)
-			select x).ToDictionary(x => x.Id, x => x.DocumentNumber);
+			select x).ToDictionary(x => x.Id, x => (string?)x.DocumentNumber);
 	}
 
 	private string? DecryptDocumentNumber(string? encryptedDocumentNumber)
@@ -1215,13 +1215,13 @@ public class RentalContractService : IRentalContractService
 	{
 		Guid currentMainTenantUserId = GetCurrentMainTenantUserId(contract);
 		IReadOnlyCollection<Guid> mainTenantUserIds = GetMainTenantUserIds(contract);
-		ContractAppendix contractAppendix = ResolveHistorySnapshotBoundaryAppendix(contract, userId);
+		ContractAppendix? contractAppendix = ResolveHistorySnapshotBoundaryAppendix(contract, userId);
 		ResolveContractTerms(contract, contractAppendix);
 		List<ContractOccupant> source = ResolveOccupantsForHistorySnapshot(contract, contractAppendix).ToList();
 		bool flag = contract.Room.RoomingHouse.LandlordUserId == userId;
 		bool flag2 = currentMainTenantUserId == userId;
 		bool flag3 = mainTenantUserIds.Contains(userId);
-		ContractOccupant contractOccupant = (from x in source
+		ContractOccupant? contractOccupant = (from x in source
 			where x.UserId == userId
 			orderby x.Status == ContractOccupantStatus.Active descending, x.UpdatedAt descending
 			select x).FirstOrDefault();
@@ -1381,7 +1381,7 @@ public class RentalContractService : IRentalContractService
 					if (userId.HasValue)
 					{
 						contract.MainTenantUserId = userId.Value;
-						User user = contract.Occupants.FirstOrDefault((ContractOccupant x) => x.UserId == userId.Value)?.User;
+						User? user = contract.Occupants.FirstOrDefault((ContractOccupant x) => x.UserId == userId.Value)?.User;
 						if (user != null)
 						{
 							contract.MainTenantUser = user;
@@ -1547,7 +1547,7 @@ public class RentalContractService : IRentalContractService
 	{
 		List<string> emails = (from x in request.Occupants
 			where !string.IsNullOrWhiteSpace(x.Email)
-			select x.Email.Trim().ToLowerInvariant()).Distinct().ToList();
+			select x.Email?.Trim().ToLowerInvariant()).Distinct().ToList();
 		if (emails.Count == 0)
 		{
 			return new Dictionary<string, VerifiedOccupantAccount>();
@@ -1583,7 +1583,7 @@ public class RentalContractService : IRentalContractService
 		foreach (User user in users)
 		{
 			KycVerification approvedKyc = latestApprovedKycByUserId[user.Id];
-			string fullName = NormalizeOptionalText(approvedKyc.OcrFullName) ?? NormalizeOptionalText(user.UserProfile?.FullName) ?? NormalizeOptionalText(user.DisplayName);
+			string? fullName = NormalizeOptionalText(approvedKyc.OcrFullName) ?? NormalizeOptionalText(user.UserProfile?.FullName) ?? NormalizeOptionalText(user.DisplayName);
 			DateOnly? dateOfBirth = approvedKyc.OcrDateOfBirth ?? user.UserProfile?.DateOfBirth;
 			if (string.IsNullOrWhiteSpace(fullName) || !dateOfBirth.HasValue)
 			{
@@ -1773,7 +1773,7 @@ public class RentalContractService : IRentalContractService
 				}
 				else if (change.ChangeType == ContractAppendixChangeType.Remove && change.TargetId.HasValue)
 				{
-					ContractOccupant contractOccupant = contract.Occupants.FirstOrDefault((ContractOccupant x) => x.Id == change.TargetId.Value);
+					ContractOccupant? contractOccupant = contract.Occupants.FirstOrDefault((ContractOccupant x) => x.Id == change.TargetId.Value);
 					if (contractOccupant != null)
 					{
 						contractOccupant.Status = ContractOccupantStatus.Active;

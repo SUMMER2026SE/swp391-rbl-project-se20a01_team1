@@ -16,9 +16,19 @@ public class PayOSWebhookSignatureVerifier : IPayOSWebhookSignatureVerifier
         this.options = options.Value;
     }
 
-    public bool Verify(string rawPayload, string? signatureHeader)
+    public bool VerifyPayment(string rawPayload, string? signatureHeader)
     {
-        if (string.IsNullOrWhiteSpace(options.ChecksumKey))
+        return VerifyCore(rawPayload, signatureHeader, options.ChecksumKey);
+    }
+
+    public bool VerifyPayout(string rawPayload, string? signatureHeader)
+    {
+        return VerifyCore(rawPayload, signatureHeader, options.PayoutChecksumKey);
+    }
+
+    private bool VerifyCore(string rawPayload, string? signatureHeader, string checksumKey)
+    {
+        if (string.IsNullOrWhiteSpace(checksumKey))
         {
             return false;
         }
@@ -40,7 +50,7 @@ public class PayOSWebhookSignatureVerifier : IPayOSWebhookSignatureVerifier
                     : root;
 
             var canonicalData = BuildCanonicalData(data);
-            var expected = ComputeHmacSha256(canonicalData);
+            var expected = ComputeHmacSha256(canonicalData, checksumKey);
             return CryptographicOperations.FixedTimeEquals(
                 Encoding.UTF8.GetBytes(expected),
                 Encoding.UTF8.GetBytes(signature.Trim().ToLowerInvariant()));
@@ -88,9 +98,9 @@ public class PayOSWebhookSignatureVerifier : IPayOSWebhookSignatureVerifier
         };
     }
 
-    private string ComputeHmacSha256(string data)
+    private string ComputeHmacSha256(string data, string checksumKey)
     {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(options.ChecksumKey));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(checksumKey));
         return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(data))).ToLowerInvariant();
     }
 }
