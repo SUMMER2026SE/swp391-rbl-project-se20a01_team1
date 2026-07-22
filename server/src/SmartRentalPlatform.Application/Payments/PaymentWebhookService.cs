@@ -34,7 +34,7 @@ public class PaymentWebhookService : IPaymentWebhookService
         CancellationToken cancellationToken = default)
     {
         var parsed = PaymentWebhookPayload.Parse(rawPayload);
-        var signatureStatus = payOSSignatureVerifier.VerifyPayment(rawPayload, signatureHeader)
+        var signatureStatus = payOSSignatureVerifier.Verify(rawPayload, signatureHeader)
             ? WebhookSignatureStatus.Valid
             : WebhookSignatureStatus.Invalid;
 

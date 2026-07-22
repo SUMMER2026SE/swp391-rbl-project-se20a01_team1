@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../app/providers/AuthProvider';
 import { ROUTE_PATHS } from '../../../app/router/routePaths';
 import { Alert } from '../../../shared/components/ui/Alert';
+import { PageHeader } from '../../../shared/components/ui/PageHeader';
+import { Toast } from '../../../shared/components/ui/Toast';
 import { Button } from '../../../shared/components/ui/Button';
 import { FormField } from '../../../shared/components/ui/FormField';
 import { LoadingState } from '../../../shared/components/feedback/LoadingState';
@@ -12,7 +14,7 @@ import { profileApi } from '../services/profileApi';
 import type { UserProfileResponse } from '../types/profile.types';
 import { uploadImage } from '../../files/api';
 import { getApiErrorMessage } from '../../../shared/api/apiError';
-import { toAssetUrl } from '../../../shared/api/assets';
+import { toAvatarImageUrl } from '../../../shared/api/assets';
 import { AvatarCropper, cropAvatar } from '../../../shared/components/ui/AvatarCropper';
 import './MyProfilePage.css'; // Reuse original CSS for now
 
@@ -56,14 +58,15 @@ export function ProfileInfoPage() {
   const [latestKyc, setLatestKyc] = useState<KycStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   const [profileForm, setProfileForm] = useState({
     displayName: '',
     phoneNumber: '',
     emergencyContactName: '',
     emergencyContactPhone: '',
-    avatarUrl: ''
+    avatarUrl: '',
+    avatarMediaAssetId: null as string | null
   });
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -95,7 +98,8 @@ export function ProfileInfoPage() {
         phoneNumber: profileResponse.data?.phoneNumber || '',
         emergencyContactName: profileResponse.data?.emergencyContactName || '',
         emergencyContactPhone: profileResponse.data?.emergencyContactPhone || '',
-        avatarUrl: profileResponse.data?.avatarUrl || ''
+        avatarUrl: profileResponse.data?.avatarUrl || '',
+        avatarMediaAssetId: profileResponse.data?.avatarMediaAssetId || null
       });
     } catch (loadError) {
       setProfileError(getApiErrorMessage(loadError, 'Không thể tải hồ sơ.'));
@@ -139,7 +143,7 @@ export function ProfileInfoPage() {
   async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setProfileError(null);
-    setProfileSuccessMessage(null);
+    setToast(null);
 
     if (!profileForm.displayName.trim()) {
       setProfileError('Tên hiển thị không được để trống.');
@@ -149,12 +153,12 @@ export function ProfileInfoPage() {
     setIsSavingProfile(true);
 
     try {
-      let finalAvatarUrl = profileForm.avatarUrl;
+      let finalAvatarMediaAssetId = profileForm.avatarMediaAssetId;
       if (selectedFile || isCropChanged) {
-        const srcToCrop = previewUrl || toAssetUrl(profileForm.avatarUrl);
+        const srcToCrop = previewUrl || toAvatarImageUrl(profileForm);
         const croppedFile = await cropAvatar(srcToCrop, cropParams.zoom, cropParams.position);
         const uploadResult = await uploadImage(croppedFile, 'Avatar');
-        finalAvatarUrl = uploadResult.url;
+        finalAvatarMediaAssetId = uploadResult.mediaAssetId || null;
       }
 
       const response = await profileApi.updateProfile({
@@ -162,13 +166,14 @@ export function ProfileInfoPage() {
         phoneNumber: profileForm.phoneNumber.trim() || null,
         emergencyContactName: profileForm.emergencyContactName.trim() || null,
         emergencyContactPhone: profileForm.emergencyContactPhone.trim() || null,
-        avatarUrl: finalAvatarUrl || null
+        avatarMediaAssetId: finalAvatarMediaAssetId || null
       });
 
       setProfile(response.data);
       setProfileForm(current => ({
         ...current,
-        avatarUrl: response.data?.avatarUrl || ''
+        avatarUrl: response.data?.avatarUrl || '',
+        avatarMediaAssetId: response.data?.avatarMediaAssetId || null
       }));
 
       setSelectedFile(null);
@@ -180,10 +185,10 @@ export function ProfileInfoPage() {
       }
 
       await refreshMe();
-      setProfileSuccessMessage('Cập nhật thông tin hồ sơ thành công.');
+      setToast({ message: 'Cập nhật thông tin hồ sơ thành công.', type: 'success' });
       setIsEditingProfile(false);
     } catch (saveError) {
-      setProfileError(getApiErrorMessage(saveError, 'Không thể cập nhật hồ sơ.'));
+      setToast({ message: getApiErrorMessage(saveError, 'Không thể cập nhật hồ sơ.'), type: 'error' });
     } finally {
       setIsSavingProfile(false);
     }
@@ -191,32 +196,46 @@ export function ProfileInfoPage() {
 
   return (
     <div>
-      <div className="profile-info-card">
-        <section className="overview-band">
-          <div className="overview-left">
-            <p className="eyebrow">TÀI KHOẢN</p>
-            <h2>Thông tin hồ sơ</h2>
-            <p className="overview-description">Cập nhật thông tin cá nhân và thông tin liên hệ của bạn.</p>
+      <PageHeader
+        icon={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
           </div>
-          <div className="overview-right">
-            {!isEditingProfile && !isLoading && (
-              <Button type="button" onClick={() => setIsEditingProfile(true)} className="profile-edit-btn">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                </svg>
-                Chỉnh sửa
-              </Button>
-            )}
-          </div>
-        </section>
+        }
+        eyebrow="TÀI KHOẢN"
+        title="Thông tin hồ sơ"
+        description="Cập nhật thông tin cá nhân và thông tin liên hệ của bạn."
+        rightContent={
+          !isEditingProfile ? (
+            <Button
+              type="button"
+              className="profile-edit-btn"
+              disabled={isLoading}
+              onClick={() => {
+                setProfileError(null);
+                setToast(null);
+                setIsEditingProfile(true);
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+              <span>Chỉnh sửa</span>
+            </Button>
+          ) : null
+        }
+      />
 
+      <div className="profile-info-card">
         {isLoading ? <LoadingState message="Đang tải hồ sơ..." /> : null}
 
         {!isLoading ? (
           <form className="auth-form" onSubmit={handleSaveProfile}>
             {profileError ? <Alert type="error">{profileError}</Alert> : null}
-            {profileSuccessMessage ? <Alert type="success">{profileSuccessMessage}</Alert> : null}
 
             {/* Avatar Section */}
             <div className="profile-avatar-row">
@@ -227,7 +246,7 @@ export function ProfileInfoPage() {
                       {previewUrl || isCropChanged ? (
                         <div className="profile-avatar-preview-wrapper">
                           <img
-                            src={previewUrl || toAssetUrl(profileForm.avatarUrl)}
+                            src={previewUrl || toAvatarImageUrl(profileForm)}
                             alt="Avatar"
                             className="profile-avatar-preview-img"
                             style={{
@@ -237,7 +256,7 @@ export function ProfileInfoPage() {
                         </div>
                       ) : (
                         <img
-                          src={toAssetUrl(profileForm.avatarUrl)}
+                          src={toAvatarImageUrl(profileForm)}
                           alt="Avatar"
                           className="profile-avatar-preview"
                         />
@@ -247,7 +266,7 @@ export function ProfileInfoPage() {
                         className="profile-avatar-edit-overlay"
                         title="Chỉnh sửa khung ảnh"
                         onClick={() => {
-                          const currentSrc = previewUrl || toAssetUrl(profileForm.avatarUrl);
+                          const currentSrc = previewUrl || toAvatarImageUrl(profileForm);
                           if (currentSrc) {
                             const finalSrc = currentSrc.startsWith('blob:') 
                               ? currentSrc 
@@ -299,7 +318,7 @@ export function ProfileInfoPage() {
                 <div className="profile-avatar-container">
                   {profileForm.avatarUrl && profileForm.avatarUrl.trim() !== '' ? (
                     <img
-                      src={toAssetUrl(profileForm.avatarUrl)}
+                      src={toAvatarImageUrl(profileForm)}
                       alt="Avatar"
                       className="profile-avatar-preview"
                     />
@@ -445,13 +464,14 @@ export function ProfileInfoPage() {
                 <Button type="button" variant="secondary" disabled={isSavingProfile} onClick={() => {
                   setIsEditingProfile(false);
                   setProfileError(null);
-                  setProfileSuccessMessage(null);
+                  setToast(null);
                   setProfileForm({
                     displayName: profile?.displayName || '',
                     phoneNumber: profile?.phoneNumber || '',
                     emergencyContactName: profile?.emergencyContactName || '',
                     emergencyContactPhone: profile?.emergencyContactPhone || '',
-                    avatarUrl: profile?.avatarUrl || ''
+                    avatarUrl: profile?.avatarUrl || '',
+                    avatarMediaAssetId: profile?.avatarMediaAssetId || null
                   });
                   setSelectedFile(null);
                   setCropParams({ zoom: 1, position: { x: 0, y: 0 } });
@@ -646,6 +666,7 @@ export function ProfileInfoPage() {
           }}
         />
       )}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }

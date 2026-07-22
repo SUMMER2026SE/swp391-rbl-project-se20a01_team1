@@ -8,7 +8,6 @@ public interface IPayOSClient
     Task<PayOSCreatePayoutResult> CreatePayoutAsync(
         PayOSCreatePayoutInput input,
         CancellationToken cancellationToken = default);
-
     Task<PayOSPayoutDetailsResult> GetPayoutDetailsAsync(
         string providerOrderCode,
         CancellationToken cancellationToken = default);

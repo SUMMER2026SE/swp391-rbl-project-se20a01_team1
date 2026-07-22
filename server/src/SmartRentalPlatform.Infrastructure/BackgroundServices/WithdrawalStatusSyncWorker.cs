@@ -24,7 +24,7 @@ public class WithdrawalStatusSyncWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("WithdrawalStatusSyncWorker is starting.");
+        logger.SafeLogInformation("WithdrawalStatusSyncWorker is starting.");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -34,13 +34,13 @@ public class WithdrawalStatusSyncWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Error occurred while syncing withdrawal statuses.");
+                logger.SafeLogError(ex, "Error occurred while syncing withdrawal statuses.");
             }
 
             await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
         }
 
-        logger.LogInformation("WithdrawalStatusSyncWorker is stopping.");
+        logger.SafeLogInformation("WithdrawalStatusSyncWorker is stopping.");
     }
 
     private async Task SyncWithdrawalStatusesAsync(CancellationToken cancellationToken)
@@ -62,7 +62,7 @@ public class WithdrawalStatusSyncWorker : BackgroundService
             {
                 if (string.IsNullOrWhiteSpace(req.ProviderTransactionCode))
                 {
-                    logger.LogWarning("Withdrawal {ProviderOrderCode} is in Processing state but missing ProviderTransactionCode. Cannot sync status.", req.ProviderOrderCode);
+                    logger.SafeLogWarning("Withdrawal {ProviderOrderCode} is in Processing state but missing ProviderTransactionCode. Cannot sync status.", req.ProviderOrderCode);
                     continue;
                 }
 
@@ -82,7 +82,7 @@ public class WithdrawalStatusSyncWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to sync status for withdrawal {ProviderOrderCode}", req.ProviderOrderCode);
+                logger.SafeLogError(ex, "Failed to sync status for withdrawal {ProviderOrderCode}", req.ProviderOrderCode);
             }
         }
     }

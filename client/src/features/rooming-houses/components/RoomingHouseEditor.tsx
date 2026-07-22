@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { getApiErrorMessage } from '../../../shared/api/apiError';
-import { toAssetUrl } from '../../../shared/api/assets';
+import { PrivateMediaImage } from '../../../shared/components/media/PrivateMediaImage';
 import { formatStatus } from '../../../shared/utils/status';
 import { uploadImage } from '../../files/api';
 import {
@@ -15,6 +15,8 @@ import {
   updateRoomingHouseRentalPolicy,
   updateRoomingHouseLegalDocument,
 } from '../api';
+import { Toast } from '../../../shared/components/ui/Toast';
+import { Tabs } from '../../../shared/components/ui/Tabs';
 import type {
   Amenity,
   PropertyImageRequest,
@@ -32,11 +34,6 @@ import { cleanImages, toImageRequests } from '../utils/imageRequests';
 import './RoomingHouseEditor.css';
 
 type RoomingHouseTab = 'basic' | 'images' | 'amenities' | 'legal' | 'rental-policy';
-type LegalImageFieldName =
-  | 'frontImageObjectKey'
-  | 'backImageObjectKey'
-  | 'extraImageObjectKey';
-
 type RoomingHouseEditorProps = {
   title: string;
   subtitle: string;
@@ -61,9 +58,9 @@ const emptyHouseForm: RoomingHouseBasicInfoRequest = {
 
 const emptyLegalForm: UpdateLegalDocumentRequest = {
   documentType: '',
-  frontImageObjectKey: '',
-  backImageObjectKey: '',
-  extraImageObjectKey: '',
+  frontMediaAssetId: null,
+  backMediaAssetId: null,
+  extraMediaAssetId: null,
   documentNumber: '',
 };
 
@@ -94,9 +91,9 @@ function buildLegalForm(detail: RoomingHouseDetail | null): UpdateLegalDocumentR
   if (!detail) return emptyLegalForm;
   return {
     documentType: detail.legalDocument?.documentType ?? '',
-    frontImageObjectKey: detail.legalDocument?.frontImageObjectKey ?? '',
-    backImageObjectKey: detail.legalDocument?.backImageObjectKey ?? '',
-    extraImageObjectKey: detail.legalDocument?.extraImageObjectKey ?? '',
+    frontMediaAssetId: detail.legalDocument?.frontMediaAssetId ?? null,
+    backMediaAssetId: detail.legalDocument?.backMediaAssetId ?? null,
+    extraMediaAssetId: detail.legalDocument?.extraMediaAssetId ?? null,
     documentNumber: detail.legalDocument?.documentNumberMasked ?? '',
   };
 }
@@ -163,7 +160,7 @@ export default function RoomingHouseEditor({
   const [amenities, setAmenities] = useState<Amenity[]>([]);
   const [provinces, setProvinces] = useState<Province[]>([]);
   const [wards, setWards] = useState<Ward[]>([]);
-  const [message, setMessage] = useState('');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [basicForm, setBasicForm] = useState<RoomingHouseBasicInfoRequest>(() =>
@@ -223,7 +220,7 @@ export default function RoomingHouseEditor({
         setProvinces(provinceList);
         setAmenities(amenityList);
       } catch (error) {
-        setMessage(getApiErrorMessage(error, 'Không thể tải dữ liệu biểu mẫu.'));
+        setToast({ message: getApiErrorMessage(error, 'Không thể tải dữ liệu biểu mẫu.'), type: 'error' });
       }
     }
     loadInitialOptions();
@@ -238,7 +235,7 @@ export default function RoomingHouseEditor({
       try {
         setWards(await getWardsByProvince(basicForm.provinceCode));
       } catch (error) {
-        setMessage(getApiErrorMessage(error, 'Không thể tải danh sách phường/xã.'));
+        setToast({ message: getApiErrorMessage(error, 'Không thể tải danh sách phường/xã.'), type: 'error' });
       }
     }
     loadWards();
@@ -259,7 +256,7 @@ export default function RoomingHouseEditor({
 
   async function saveImages() {
     if (!roomingHouse) {
-      setMessage('Vui lòng lưu thông tin cơ bản trước.');
+      setToast({ message: 'Vui lòng lưu thông tin cơ bản trước.', type: 'info' });
       return;
     }
     await saveChange(
@@ -270,7 +267,7 @@ export default function RoomingHouseEditor({
 
   async function saveAmenities() {
     if (!roomingHouse) {
-      setMessage('Vui lòng lưu thông tin cơ bản trước.');
+      setToast({ message: 'Vui lòng lưu thông tin cơ bản trước.', type: 'info' });
       return;
     }
     await saveChange(
@@ -281,11 +278,11 @@ export default function RoomingHouseEditor({
 
   async function saveLegalDocument() {
     if (!roomingHouse) {
-      setMessage('Vui lòng lưu thông tin cơ bản trước.');
+      setToast({ message: 'Vui lòng lưu thông tin cơ bản trước.', type: 'info' });
       return;
     }
     if (!canEditLegalDocument) {
-      setMessage('Giấy tờ pháp lý chỉ được chỉnh sửa khi khu trọ là bản nháp hoặc bị từ chối.');
+      setToast({ message: 'Giấy tờ pháp lý chỉ được chỉnh sửa khi khu trọ là bản nháp hoặc bị từ chối.', type: 'info' });
       return;
     }
     await saveChange(
@@ -296,7 +293,7 @@ export default function RoomingHouseEditor({
 
   async function saveRentalPolicy() {
     if (!roomingHouse) {
-      setMessage('Vui lòng lưu thông tin cơ bản trước.');
+      setToast({ message: 'Vui lòng lưu thông tin cơ bản trước.', type: 'info' });
       return;
     }
     await saveChange(
@@ -310,20 +307,20 @@ export default function RoomingHouseEditor({
 
   async function submitForReview() {
     if (!roomingHouse) {
-      setMessage('Vui lòng lưu thông tin cơ bản trước khi gửi duyệt.');
+      setToast({ message: 'Vui lòng lưu thông tin cơ bản trước khi gửi duyệt.', type: 'info' });
       return;
     }
 
     setSaving(true);
-    setMessage('');
+    setToast(null);
 
     try {
       const submitted = await submitRoomingHouse(roomingHouse.id);
       setRoomingHouse(submitted);
       onSubmitSuccess?.(submitted);
-      setMessage('Đã gửi khu trọ để quản trị viên xét duyệt.');
+      setToast({ message: 'Đã gửi khu trọ để quản trị viên xét duyệt.', type: 'success' });
     } catch (error) {
-      setMessage(getApiErrorMessage(error, 'Không thể gửi duyệt khu trọ.'));
+      setToast({ message: getApiErrorMessage(error, 'Không thể gửi duyệt khu trọ.'), type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -334,15 +331,15 @@ export default function RoomingHouseEditor({
     successMessage: string
   ) {
     setSaving(true);
-    setMessage('');
+    setToast(null);
     try {
       const saved = await request();
       setRoomingHouse(saved);
       hydrateForms(saved);
       onChange?.(saved);
-      setMessage(successMessage);
+      setToast({ message: successMessage, type: 'success' });
     } catch (error) {
-      setMessage(getApiErrorMessage(error, 'Không thể lưu thông tin khu trọ.'));
+      setToast({ message: getApiErrorMessage(error, 'Không thể lưu thông tin khu trọ.'), type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -360,27 +357,34 @@ export default function RoomingHouseEditor({
     setBasicForm({ ...basicForm, provinceCode, wardCode: '' });
   }
 
-  async function uploadLegalImage(fieldName: LegalImageFieldName, file: File | null) {
+  async function uploadLegalImage(fieldName: 'front' | 'back' | 'extra', file: File | null) {
     if (!file || !canEditLegalDocument) return;
 
     setSaving(true);
-    setMessage('');
+    setToast(null);
 
     try {
       const uploaded = await uploadImage(file, 'LegalDocument');
-      setLegalForm((current) => ({ ...current, [fieldName]: uploaded.objectKey }));
+      setLegalForm((current) => ({
+        ...current,
+        [`${fieldName}MediaAssetId`]: uploaded.mediaAssetId || null,
+      }));
     } catch (error) {
-      setMessage(
-        getApiErrorMessage(error, 'Không thể tải ảnh giấy tờ lên.')
-      );
+      setToast({
+        message: getApiErrorMessage(error, 'Không thể tải ảnh giấy tờ lên.'),
+        type: 'error',
+      });
     } finally {
       setSaving(false);
     }
   }
 
-  function removeLegalImage(fieldName: LegalImageFieldName) {
+  function removeLegalImage(fieldName: 'front' | 'back' | 'extra') {
     if (!canEditLegalDocument) return;
-    setLegalForm((current) => ({ ...current, [fieldName]: '' }));
+    setLegalForm((current) => ({
+      ...current,
+      [`${fieldName}MediaAssetId`]: null,
+    }));
   }
 
   return (
@@ -420,85 +424,79 @@ export default function RoomingHouseEditor({
         )}
       </header>
 
-      {message && <p className="rooming-house-editor__message">{message}</p>}
       {saving && <p className="rooming-house-editor__message">Đang xử lý...</p>}
 
-      <section className="rooming-house-editor__panel">
-        <div className="rooming-house-editor__tabs">
-          <TabButton
-            activeTab={activeTab}
-            tab="basic"
-            onSelect={setActiveTab}
-            icon={<span className="tab-number-circle">1</span>}
-          >
-            Thông tin cơ bản
-          </TabButton>
-          <TabButton
-            activeTab={activeTab}
-            tab="images"
-            disabled={!hasDraft}
-            onSelect={setActiveTab}
-            icon={
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-            }
-          >
-            Ảnh
-          </TabButton>
-          <TabButton
-            activeTab={activeTab}
-            tab="amenities"
-            disabled={!hasDraft}
-            onSelect={setActiveTab}
-            icon={
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-              </svg>
-            }
-          >
-            Tiện ích
-          </TabButton>
-          <TabButton
-            activeTab={activeTab}
-            tab="legal"
-            disabled={!hasDraft}
-            onSelect={setActiveTab}
-            icon={
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-              </svg>
-            }
-          >
-            Giấy tờ pháp lý
-          </TabButton>
-          {isApproved && (
-            <TabButton
-              activeTab={activeTab}
-              tab="rental-policy"
-              onSelect={setActiveTab}
-              icon={
+      <>
+        <Tabs
+          className="attached-bottom"
+          variant="segmented-secondary"
+          activeId={activeTab}
+          onChange={(tab) => setActiveTab(tab as RoomingHouseTab)}
+          items={[
+            {
+              id: 'basic',
+              label: 'Thông tin cơ bản',
+              icon: <span className="tab-number-circle">1</span>,
+            },
+            {
+              id: 'images',
+              label: 'Ảnh',
+              disabled: !hasDraft,
+              title: !hasDraft ? 'Lưu thông tin cơ bản trước khi cập nhật ảnh' : undefined,
+              icon: (
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
                 </svg>
-              }
-            >
-              Chính sách thuê
-            </TabButton>
-          )}
-        </div>
+              ),
+            },
+            {
+              id: 'amenities',
+              label: 'Tiện ích',
+              disabled: !hasDraft,
+              title: !hasDraft ? 'Lưu thông tin cơ bản trước khi cập nhật tiện ích' : undefined,
+              icon: (
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
+                </svg>
+              ),
+            },
+            {
+              id: 'legal',
+              label: 'Giấy tờ pháp lý',
+              disabled: !hasDraft,
+              title: !hasDraft ? 'Lưu thông tin cơ bản trước khi cập nhật giấy tờ pháp lý' : undefined,
+              icon: (
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+              ),
+            },
+            ...(isApproved
+              ? [{
+                id: 'rental-policy',
+                label: 'Chính sách thuê',
+                icon: (
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                ),
+              }]
+              : []),
+          ]}
+        />
 
+      <section className="rooming-house-editor__panel tab-attached-panel tab-attached-panel--compact">
         {activeTab === 'basic' && (
           <div className="rooming-house-editor__form-grid">
             <TextField
@@ -662,25 +660,25 @@ export default function RoomingHouseEditor({
               <div className="legal-images-grid">
                 <LegalImageField
                   label="Ảnh mặt trước"
-                  objectKey={legalForm.frontImageObjectKey}
+                  imageUrl={roomingHouse?.legalDocument?.frontImageUrl ?? ''}
                   readOnly={!canEditLegalDocument}
-                  onUpload={(file) => void uploadLegalImage('frontImageObjectKey', file)}
-                  onRemove={() => removeLegalImage('frontImageObjectKey')}
+                  onUpload={(file) => void uploadLegalImage('front', file)}
+                  onRemove={() => removeLegalImage('front')}
                 />
                 <LegalImageField
                   label="Ảnh mặt sau"
-                  objectKey={legalForm.backImageObjectKey}
+                  imageUrl={roomingHouse?.legalDocument?.backImageUrl ?? ''}
                   readOnly={!canEditLegalDocument}
-                  onUpload={(file) => void uploadLegalImage('backImageObjectKey', file)}
-                  onRemove={() => removeLegalImage('backImageObjectKey')}
+                  onUpload={(file) => void uploadLegalImage('back', file)}
+                  onRemove={() => removeLegalImage('back')}
                 />
                 <LegalImageField
                   label="Ảnh bổ sung"
-                  objectKey={legalForm.extraImageObjectKey ?? ''}
+                  imageUrl={roomingHouse?.legalDocument?.extraImageUrl ?? ''}
                   readOnly={!canEditLegalDocument}
                   optional
-                  onUpload={(file) => void uploadLegalImage('extraImageObjectKey', file)}
-                  onRemove={() => removeLegalImage('extraImageObjectKey')}
+                  onUpload={(file) => void uploadLegalImage('extra', file)}
+                  onRemove={() => removeLegalImage('extra')}
                 />
               </div>
             </div>
@@ -761,41 +759,13 @@ export default function RoomingHouseEditor({
           </div>
         )}
       </section>
-
-
+      </>
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
-
-function TabButton({
-  activeTab,
-  tab,
-  disabled,
-  icon,
-  children,
-  onSelect,
-}: {
-  activeTab: RoomingHouseTab;
-  tab: RoomingHouseTab;
-  disabled?: boolean;
-  icon?: React.ReactNode;
-  children: string;
-  onSelect: (tab: RoomingHouseTab) => void;
-}) {
-  return (
-    <button
-      className={`editor-tab-btn ${activeTab === tab ? 'active' : ''}`}
-      disabled={disabled}
-      type="button"
-      onClick={() => onSelect(tab)}
-    >
-      {icon && <span className="tab-icon">{icon}</span>}
-      <span className="tab-text">{children}</span>
-    </button>
-  );
-}
 
 function TextField({
   label,
@@ -906,21 +876,22 @@ function NumberField({
 
 function LegalImageField({
   label,
-  objectKey,
-  readOnly,
+  imageUrl,
+  readOnly = false,
   optional = false,
   onUpload,
   onRemove,
 }: {
   label: string;
-  objectKey: string;
-  readOnly: boolean;
+  imageUrl?: string;
+  readOnly?: boolean;
   optional?: boolean;
   onUpload: (file: File | null) => void;
   onRemove: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const previewSrc = imageUrl || '';
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
@@ -938,10 +909,10 @@ function LegalImageField({
         {optional && <span className="legal-image-field__optional">Tuỳ chọn</span>}
       </div>
 
-      {objectKey ? (
+      {previewSrc ? (
         /* Preview state */
         <div className="legal-image-preview">
-          <img alt={label} src={toAssetUrl(objectKey)} className="legal-image-preview__img" />
+          <PrivateMediaImage alt={label} source={previewSrc} className="legal-image-preview__img" />
           {!readOnly && (
             <div className="legal-image-preview__overlay">
               <label className="legal-image-action-btn legal-image-action-btn--replace">

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using SmartRentalPlatform.Domain.Entities.Properties;
 using SmartRentalPlatform.Domain.Enums;
@@ -29,6 +29,8 @@ namespace SmartRentalPlatform.Infrastructure.Persistence.Configurations.Properti
                 .HasConversion<string>().HasMaxLength(30).IsRequired();
             builder.Property(x => x.VisibilityStatus).HasColumnName("visibility_status")
                 .HasConversion<string>().HasMaxLength(30).IsRequired();
+            builder.Property(x => x.AverageRating).HasColumnName("average_rating").HasDefaultValue(0).IsRequired();
+            builder.Property(x => x.TotalReviews).HasColumnName("total_reviews").HasDefaultValue(0).IsRequired();
             builder.Property(x => x.RejectedReason).HasColumnName("rejected_reason").HasColumnType("text");
             builder.Property(x => x.ReviewedByAdminId).HasColumnName("reviewed_by_admin_id");
             builder.Property(x => x.ReviewedAt).HasColumnName("reviewed_at");
@@ -39,6 +41,15 @@ namespace SmartRentalPlatform.Infrastructure.Persistence.Configurations.Properti
             builder.HasOne(x => x.Ward).WithMany(x => x.RoomingHouses).HasForeignKey(x => x.WardCode).OnDelete(DeleteBehavior.Restrict);
             builder.HasOne(x => x.Province).WithMany(x => x.RoomingHouses).HasForeignKey(x => x.ProvinceCode).OnDelete(DeleteBehavior.Restrict);
             builder.HasOne(x => x.ReviewedByAdmin).WithMany(x => x.ReviewedRoomingHouses).HasForeignKey(x => x.ReviewedByAdminId).OnDelete(DeleteBehavior.SetNull);
+
+            builder.HasIndex(x => new { x.ApprovalStatus, x.VisibilityStatus, x.DeletedAt, x.CreatedAt })
+                .HasDatabaseName("ix_rooming_houses_public_listing");
+            builder.HasIndex(x => new { x.ProvinceCode, x.WardCode, x.ApprovalStatus, x.VisibilityStatus, x.DeletedAt })
+                .HasDatabaseName("ix_rooming_houses_public_location");
+            builder.HasIndex(x => new { x.Latitude, x.Longitude })
+                .HasDatabaseName("ix_rooming_houses_geo_bounds");
+            builder.HasIndex(x => new { x.LandlordUserId, x.DeletedAt, x.CreatedAt })
+                .HasDatabaseName("ix_rooming_houses_landlord_dashboard");
         }
     }
 }

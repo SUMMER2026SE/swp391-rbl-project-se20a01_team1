@@ -31,6 +31,8 @@ export type RoomingHouseSummary = {
   coverImageUrl?: string | null;
   totalRooms?: number;
   availableRooms?: number;
+  averageRating?: number;
+  totalReviews?: number;
 };
 
 export type PagedResult<T> = {
@@ -46,7 +48,7 @@ export type PagedResult<T> = {
 
 export type PropertyImageRequest = {
   id?: string;
-  objectKey: string;
+  mediaAssetId?: string | null;
   imageUrl?: string;
   caption?: string | null;
   isCover: boolean;
@@ -60,7 +62,8 @@ export type RoomingHouseRule = {
   id: string;
   roomingHouseId: string;
   sourceType: HouseRuleSourceType;
-  pdfObjectKey: string;
+  mediaAssetId?: string | null;
+  pdfUrl?: string | null;
   generalRules?: string | null;
   quietHours?: string | null;
   securityPolicy?: string | null;
@@ -76,7 +79,7 @@ export type RoomingHouseRule = {
 
 export type UpsertRoomingHouseRuleRequest = {
   sourceType: HouseRuleSourceType;
-  pdfObjectKey?: string | null;
+  pdfMediaAssetId?: string | null;
   generalRules?: string | null;
   quietHours?: string | null;
   securityPolicy?: string | null;
@@ -90,9 +93,9 @@ export type UpsertRoomingHouseRuleRequest = {
 
 export type UpdateLegalDocumentRequest = {
   documentType: string;
-  frontImageObjectKey: string;
-  backImageObjectKey: string;
-  extraImageObjectKey?: string | null;
+  frontMediaAssetId?: string | null;
+  backMediaAssetId?: string | null;
+  extraMediaAssetId?: string | null;
   documentNumber: string;
 };
 
@@ -121,6 +124,17 @@ export type RoomInHouseDetail = {
   amenities: Amenity[];
 };
 
+export type RoomingHouseServicePrice = {
+  id: string;
+  serviceTypeId: string;
+  serviceTypeName: string;
+  pricingUnit: string;
+  unitPrice: number;
+  note?: string | null;
+  meterUnitName?: string | null;
+  isActive: boolean;
+};
+
 export type RoomingHouseDetail = RoomingHouseSummary & {
   description?: string;
   addressLine: string;
@@ -135,6 +149,7 @@ export type RoomingHouseDetail = RoomingHouseSummary & {
   images: PropertyImage[];
   amenities: Amenity[];
   rooms: RoomInHouseDetail[];
+  servicePrices: RoomingHouseServicePrice[];
 };
 
 export type RoomingHouseSearchItem = {
@@ -153,6 +168,8 @@ export type RoomingHouseSearchItem = {
   maxAreaM2?: number | null;
   amenities: Amenity[];
   createdAt: string;
+  averageRating?: number;
+  totalReviews?: number;
 };
 
 export type RoomingHouseSearchMetadata = {
@@ -256,6 +273,8 @@ export type RoomingHouseListingItem = {
   maxAreaM2?: number | null;
   amenities: Amenity[];
   createdAt: string;
+  averageRating?: number;
+  totalReviews?: number;
 };
 
 export type LocationSearchResult = {
@@ -269,3 +288,93 @@ export type LocationSearchResult = {
 
 export type LocationSuggestion = LocationSearchResult;
 
+// Reviews
+export type RoomingHouseReviewResponse = {
+  id: string;
+  rentalContractId: string;
+  roomNumber?: string | null;
+  contractStartDate?: string | null;
+  contractEndDate?: string | null;
+  tenantUserId: string;
+  tenantDisplayName: string;
+  tenantAvatarUrl?: string | null;
+  rating: number;
+  comment?: string | null;
+  landlordReply?: string | null;
+  landlordReplyCreatedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  isReported?: boolean;
+  moderationStatus?: string;
+  moderationReason?: string | null;
+  aiModerationProvider?: string | null;
+  aiModerationRiskLevel?: string | null;
+  adminNote?: string | null;
+  images: PropertyImageRequest[];
+};
+
+export type ReviewEligibilityResponse = {
+  isEligible: boolean;
+  reason?: string | null;
+};
+
+export interface CreateRoomingHouseReviewRequest {
+  rating: number;
+  comment: string;
+  images?: File[];
+}
+
+export interface RoomingHouseReviewEligibilitySummaryResponse {
+  isEligible: boolean;
+  contractId?: string | null;
+  reason?: string | null;
+  existingReview?: RoomingHouseReviewResponse | null;
+  reviewableContracts: ReviewableContractResponse[];
+};
+
+export interface ReviewableContractResponse {
+  contractId: string;
+  roomNumber: string;
+  startDate: string;
+  endDate?: string | null;
+  status: string;
+  canReview: boolean;
+  reviewStatus?: string | null;
+  reviewId?: string | null;
+  review?: RoomingHouseReviewResponse | null;
+}
+
+export type UpdateRoomingHouseReviewRequest = {
+  rating: number;
+  comment?: string | null;
+  retainedImageIds?: string[];
+  newImages?: File[];
+};
+
+export type ReplyRoomingHouseReviewRequest = {
+  reply: string;
+};
+
+export type RoomingHouseReviewListResponse = {
+  averageRating: number;
+  totalReviews: number;
+  ratingDistribution: Record<number, number>;
+  reviews: RoomingHouseReviewResponse[];
+};
+
+export type CreateReviewReportRequest = {
+  reason: string;
+};
+
+export type ReviewReportResponse = {
+  id: string;
+  roomingHouseReviewId: string;
+  reporterUserId: string;
+  reporterDisplayName: string;
+  reason: string;
+  status: string;
+  adminNote?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+  review?: RoomingHouseReviewResponse | null;
+};

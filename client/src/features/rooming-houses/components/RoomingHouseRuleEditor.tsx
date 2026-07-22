@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { getApiErrorMessage } from '../../../shared/api/apiError';
+import { buildPublicMediaViewUrl } from '../../../shared/api/media';
 import { toAssetUrl } from '../../../shared/api/assets';
-import { uploadPdf } from '../../files/api';
+import { type FileUploadResponse, uploadPdf } from '../../files/api';
 import { upsertRoomingHouseRule, previewRoomingHouseRule } from '../api';
+import { Toast } from '../../../shared/components/ui/Toast';
 import type {
   HouseRuleSourceType,
   RoomingHouseRule,
@@ -38,31 +40,35 @@ export default function RoomingHouseRuleEditor({
   const [sourceType, setSourceType] = useState<HouseRuleSourceType>(
     lockedSourceType ?? 'PdfUpload'
   );
-  const [pdfObjectKey, setPdfObjectKey] = useState(houseRule?.pdfObjectKey ?? '');
+  const [pdfMediaAssetId, setPdfMediaAssetId] = useState(houseRule?.mediaAssetId ?? null);
+  const [uploadedPdf, setUploadedPdf] = useState<FileUploadResponse | null>(null);
   const [form, setForm] = useState<UpsertRoomingHouseRuleRequest>(() =>
     buildForm(houseRule)
   );
-  const [message, setMessage] = useState('');
+  const [validationError, setValidationError] = useState('');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [saving, setSaving] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     setSourceType(houseRule?.sourceType ?? 'PdfUpload');
-    setPdfObjectKey(houseRule?.pdfObjectKey ?? '');
+    setPdfMediaAssetId(houseRule?.mediaAssetId ?? null);
+    setUploadedPdf(null);
     setForm(buildForm(houseRule));
-    setMessage('');
+    setValidationError('');
   }, [houseRule]);
 
   async function uploadRulePdf(file: File | null) {
     if (!file) return;
     setSaving(true);
-    setMessage('');
+    setValidationError('');
     try {
       const uploaded = await uploadPdf(file, 'HouseRule');
-      setPdfObjectKey(uploaded.objectKey);
-      setMessage('Đã tải PDF lên. Bấm lưu để áp dụng luật khu trọ.');
+      setPdfMediaAssetId(uploaded.mediaAssetId || null);
+      setUploadedPdf(uploaded);
+      setToast({ message: 'Đã tải PDF lên. Bấm lưu để áp dụng luật khu trọ.', type: 'success' });
     } catch (error) {
-      setMessage(getApiErrorMessage(error, 'Không thể tải PDF luật khu trọ.'));
+      setToast({ message: getApiErrorMessage(error, 'Không thể tải PDF luật khu trọ.'), type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -70,26 +76,27 @@ export default function RoomingHouseRuleEditor({
 
   async function saveRule() {
     const isEmpty = sourceType === 'PdfUpload'
-      ? !pdfObjectKey
+      ? !pdfMediaAssetId
       : !form.generalRules && !form.quietHours && !form.securityPolicy && !form.cleaningPolicy && !form.guestPolicy && !form.parkingPolicy && !form.utilityPolicy && !form.damageCompensationPolicy && !form.additionalNotes;
 
     if (isEmpty) {
-      setMessage('Vui lòng nhập ít nhất một nội dung luật khu trọ.');
+      setValidationError('Vui lòng nhập ít nhất một nội dung luật khu trọ.');
       return;
     }
 
     setSaving(true);
-    setMessage('');
+    setValidationError('');
     try {
       const payload: UpsertRoomingHouseRuleRequest =
         sourceType === 'PdfUpload'
-          ? { sourceType, pdfObjectKey }
+          ? { sourceType, pdfMediaAssetId }
           : { ...form, sourceType: 'FormGenerated' };
       const saved = await upsertRoomingHouseRule(roomingHouseId, payload);
+      setUploadedPdf(null);
       onSaved?.(saved);
-      setMessage('Đã lưu luật khu trọ.');
+      setToast({ message: 'Đã lưu luật khu trọ.', type: 'success' });
     } catch (error) {
-      setMessage(getApiErrorMessage(error, 'Không thể lưu luật khu trọ.'));
+      setToast({ message: getApiErrorMessage(error, 'Không thể lưu luật khu trọ.'), type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -97,7 +104,7 @@ export default function RoomingHouseRuleEditor({
 
   async function handlePreview() {
     setPreviewing(true);
-    setMessage('');
+    setValidationError('');
     try {
       const payload: UpsertRoomingHouseRuleRequest = {
         ...form,
@@ -107,7 +114,7 @@ export default function RoomingHouseRuleEditor({
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank');
     } catch (error) {
-      setMessage(getApiErrorMessage(error, 'Không thể hiển thị bản xem trước PDF.'));
+      setToast({ message: getApiErrorMessage(error, 'Không thể hiển thị bản xem trước PDF.'), type: 'error' });
     } finally {
       setPreviewing(false);
     }
@@ -116,37 +123,28 @@ export default function RoomingHouseRuleEditor({
   const canChooseSource = !lockedSourceType;
 
   const isEmpty = sourceType === 'PdfUpload'
-    ? !pdfObjectKey
+    ? !pdfMediaAssetId
     : !form.generalRules && !form.quietHours && !form.securityPolicy && !form.cleaningPolicy && !form.guestPolicy && !form.parkingPolicy && !form.utilityPolicy && !form.damageCompensationPolicy && !form.additionalNotes;
+  const pdfLink = pdfMediaAssetId
+    ? buildPublicMediaViewUrl(pdfMediaAssetId)
+    : toAssetUrl(uploadedPdf?.url || houseRule?.pdfUrl || '');
+  const hasPdf = Boolean(pdfMediaAssetId || pdfLink);
 
   return (
     <div className="rooming-house-rule-editor">
       {/* Alert banner */}
       {(() => {
-        if (message) {
-          const isSuccess = message.includes('thành công') || message.includes('Đã lưu') || message.includes('Đã tải');
-          if (isSuccess) {
-            return (
-              <div className="rooming-house-rule-editor__alert rooming-house-rule-editor__alert--success">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
-                <span>{message}</span>
-              </div>
-            );
-          } else {
-            return (
-              <div className="rooming-house-rule-editor__alert rooming-house-rule-editor__alert--danger">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <span>{message}</span>
-              </div>
-            );
-          }
+        if (validationError) {
+          return (
+            <div className="rooming-house-rule-editor__alert rooming-house-rule-editor__alert--danger">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span>{validationError}</span>
+            </div>
+          );
         }
         
         if (isEmpty) {
@@ -204,7 +202,7 @@ export default function RoomingHouseRuleEditor({
 
       {sourceType === 'PdfUpload' ? (
         <div className="rooming-house-rule-pdf-section">
-          {pdfObjectKey ? (
+          {hasPdf ? (
             <>
               <p className="pdf-status-text">Đã tải lên PDF luật khu trọ.</p>
               <div className="pdf-upload-dropzone">
@@ -221,7 +219,7 @@ export default function RoomingHouseRuleEditor({
                 <div className="pdf-upload-dropzone__middle">
                   <h5>Luật_khu_trọ.pdf</h5>
                   <p>
-                    <a href={toAssetUrl(pdfObjectKey)} target="_blank" rel="noreferrer" className="pdf-view-link">
+                    <a href={pdfLink} target="_blank" rel="noreferrer" className="pdf-view-link">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px', verticalAlign: 'middle' }}>
                         <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                         <polyline points="15 3 21 3 21 9" />
@@ -437,6 +435,8 @@ export default function RoomingHouseRuleEditor({
           <span>{saving ? 'Đang lưu...' : 'Lưu luật khu trọ'}</span>
         </button>
       </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }

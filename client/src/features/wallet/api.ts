@@ -8,7 +8,7 @@ import type {
   CreatePayOSTopUpResponse,
   WalletTopUpResponse,
   PagedResult,
-  WithdrawalRequest,
+  CreateWithdrawalRequest,
   WithdrawalRequestResponse
 } from './types';
 
@@ -50,19 +50,19 @@ export const walletApi = {
       body: payload
     }),
 
-  requestWithdrawal: (payload: WithdrawalRequest) =>
-    apiClient<ApiResponse<any>>(ENDPOINTS.WITHDRAWALS.ROOT, {
+  requestWithdrawal: (payload: CreateWithdrawalRequest, idempotencyKey: string = crypto.randomUUID()) =>
+    apiClient<ApiResponse<WithdrawalRequestResponse>>(ENDPOINTS.WALLET.WITHDRAWALS, {
       method: 'POST',
       auth: true,
       body: payload,
       headers: {
-        'X-Idempotency-Key': crypto.randomUUID()
+        'X-Idempotency-Key': idempotencyKey
       }
     }),
 
   getMyWithdrawals: (page: number = 1, pageSize: number = 10) =>
     apiClient<ApiResponse<PagedResult<WithdrawalRequestResponse>>>(
-      `${ENDPOINTS.WITHDRAWALS.MY}?page=${page}&pageSize=${pageSize}`,
+      `${ENDPOINTS.WALLET.WITHDRAWALS}?page=${page}&pageSize=${pageSize}`,
       {
         method: 'GET',
         auth: true

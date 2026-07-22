@@ -1,8 +1,19 @@
 export interface PagedResponse<T> {
   items: T[];
-  totalCount: number;
+  totalItems: number;
   pageSize: number;
   pageNumber: number;
+}
+
+export interface AdminReviewReportListItem {
+  id: string;
+  roomingHouseReviewId: string;
+  reporterUserId: string;
+  reporterDisplayName: string;
+  reason: string;
+  status: string;
+  createdAt: string;
+  roomingHouseName: string;
 }
 
 export interface AdminUserListItem {
@@ -63,6 +74,30 @@ export interface AdminRoomingHouseListItem {
   createdAt: string;
 }
 
+export interface AdminReviewReportDetail extends AdminReviewReportListItem {
+  adminNote?: string | null;
+  resolvedAt?: string | null;
+  review?: {
+    id: string;
+    tenantUserId: string;
+    tenantDisplayName: string;
+    tenantAvatarUrl?: string | null;
+    rating: number;
+    comment?: string | null;
+    landlordReply?: string | null;
+    landlordReplyCreatedAt?: string | null;
+    createdAt: string;
+    updatedAt?: string | null;
+    images: Array<{
+      id: string;
+      imageUrl: string;
+      caption?: string;
+      isCover: boolean;
+      sortOrder: number;
+    }>;
+  };
+}
+
 export interface AdminRoomingHouseDetail extends AdminRoomingHouseListItem {
   description?: string | null;
   addressLine: string;
@@ -74,16 +109,18 @@ export interface AdminRoomingHouseDetail extends AdminRoomingHouseListItem {
   reviewedByAdminId?: string | null;
   reviewedAt?: string | null;
   legalDocument?: {
+    frontMediaAssetId?: string | null;
+    backMediaAssetId?: string | null;
+    extraMediaAssetId?: string | null;
     documentType: string;
-    frontImageObjectKey: string;
-    backImageObjectKey: string;
-    extraImageObjectKey?: string | null;
+    frontImageUrl?: string | null;
+    backImageUrl?: string | null;
+    extraImageUrl?: string | null;
     documentNumberMasked: string;
     uploadedAt: string;
   } | null;
   images: Array<{
     id: string;
-    objectKey: string;
     imageUrl: string;
     caption?: string | null;
     isCover: boolean;

@@ -1,19 +1,28 @@
+using Amazon.S3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using System.Net;
+using System.Net.Sockets;
 using SmartRentalPlatform.Application.Common.Interfaces;
+using SmartRentalPlatform.Application.Common.Interfaces.Media;
 using SmartRentalPlatform.Application.Common.Options;
 using SmartRentalPlatform.Infrastructure.Caching;
 using SmartRentalPlatform.Infrastructure.BackgroundServices;
 using SmartRentalPlatform.Infrastructure.ExternalServices.Ekyc;
 using SmartRentalPlatform.Infrastructure.ExternalServices.Email;
+using SmartRentalPlatform.Infrastructure.ExternalServices.ESign;
+using SmartRentalPlatform.Infrastructure.ExternalServices.DeepSeek;
 using SmartRentalPlatform.Infrastructure.ExternalServices.Gemini;
 using SmartRentalPlatform.Infrastructure.ExternalServices.Google;
 using SmartRentalPlatform.Infrastructure.ExternalServices.PayOS;
+using SmartRentalPlatform.Infrastructure.ExternalServices.Ai;
 using SmartRentalPlatform.Infrastructure.ExternalServices.VietMap;
+using SmartRentalPlatform.Infrastructure.ExternalServices.Ai;
 using SmartRentalPlatform.Infrastructure.Identity;
+using SmartRentalPlatform.Infrastructure.Media;
 using SmartRentalPlatform.Infrastructure.Options;
 using SmartRentalPlatform.Infrastructure.Persistence;
 using SmartRentalPlatform.Infrastructure.Security;
@@ -30,12 +39,9 @@ public static class DependencyInjection
         var connectionString = configuration.GetConnectionString("DefaultConnection");
 
         services.AddDbContext<AppDbContext>(options =>
-        {
-            options.UseNpgsql(connectionString, builder =>
-            {
-                builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-            });
-        });
+            options.UseNpgsql(
+                configuration.GetConnectionString("DefaultConnection"),
+                b => b.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
 
         services.AddScoped<IAppDbContext>(provider =>
               provider.GetRequiredService<AppDbContext>());
@@ -45,7 +51,27 @@ public static class DependencyInjection
         services.AddScoped<IGoogleAuthService, GoogleAuthService>();
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
-        services.AddScoped<IFileStorageService, LocalFileStorageService>();
+        services.AddScoped<IFileStorageService, MediaBackedFileStorageService>();
+        services.AddSingleton<IMediaObjectKeyFactory, MediaObjectKeyFactory>();
+        services.Configure<S3StorageOptions>(configuration.GetSection(S3StorageOptions.SectionPath));
+        services.AddSingleton<IAmazonS3>(provider =>
+        {
+            var options = provider.GetRequiredService<IOptions<S3StorageOptions>>().Value;
+            return S3StorageService.CreateClient(options);
+        });
+        services.AddScoped<S3StorageService>();
+        services.AddScoped<IMediaStorageService>(provider => provider.GetRequiredService<S3StorageService>());
+        services.AddScoped<IMediaAssetService, MediaAssetService>();
+        services.AddScoped<IMediaAccessService, MediaAccessService>();
+        services.AddScoped<IMediaWorkflowService, MediaWorkflowService>();
+        services.AddScoped<IMediaPermissionService, DefaultMediaPermissionService>();
+        services.Configure<MeterAiOptions>(configuration.GetSection(MeterAiOptions.SectionName));
+        services.AddHttpClient<IMeterAiClient, MeterAiClient>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<MeterAiOptions>>().Value;
+            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        });
         services.Configure<VietMapOptions>(configuration.GetSection(VietMapOptions.SectionName));
         services.AddHttpClient<IVietMapService, VietMapService>((provider, client) =>
         {
@@ -60,11 +86,24 @@ public static class DependencyInjection
             client.BaseAddress = new Uri("https://generativelanguage.googleapis.com/v1beta/");
             client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
         });
+        services.Configure<DeepSeekOptions>(configuration.GetSection(DeepSeekOptions.SectionName));
+        services.AddHttpClient<IChatAiStructuredOutputService, DeepSeekChatStructuredOutputService>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<DeepSeekOptions>>().Value;
+            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        });
+        services.AddHttpClient<IBackupAiStructuredOutputService, DeepSeekChatStructuredOutputService>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<DeepSeekOptions>>().Value;
+            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        });
         services.Configure<VnptEkycOptions>(configuration.GetSection(VnptEkycOptions.SectionName));
         services.AddDataProtection();
         services.AddMemoryCache();
+        services.AddSingleton<IChatPresenceTracker, InMemoryChatPresenceTracker>();
         services.AddScoped<IConversationCacheService, ConversationCacheService>();
-        services.AddScoped<IPrivateStorageService, LocalPrivateStorageService>();
         services.AddScoped<IHashService, Sha256HashService>();
         services.AddScoped<ISensitiveDataProtector, DataProtectionSensitiveDataProtector>();
         services.AddHostedService<RoomDepositExpirationWorker>();
@@ -72,7 +111,9 @@ public static class DependencyInjection
         services.AddHostedService<RentalContractExpirationWorker>();
         services.AddHostedService<RentalContractMoveInActivationWorker>();
         services.AddHostedService<ContractAppendixApplicationWorker>();
+        services.AddHostedService<ESignEnvelopeExpirationWorker>();
         services.AddHostedService<WithdrawalStatusSyncWorker>();
+        services.AddHostedService<ReviewAiModerationWorker>();
         services.Configure<SmartRentalPlatform.Application.Wallets.Options.WithdrawalOptions>(configuration.GetSection(SmartRentalPlatform.Application.Wallets.Options.WithdrawalOptions.SectionName));
         services.Configure<PayOSOptions>(configuration.GetSection(PayOSOptions.SectionName));
         services.AddHttpClient(PayOSClient.HttpClientName, (provider, client) =>
@@ -80,6 +121,39 @@ public static class DependencyInjection
             var options = provider.GetRequiredService<IOptions<PayOSOptions>>().Value;
             client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            ConnectCallback = async (context, cancellationToken) =>
+            {
+                var addresses = await Dns.GetHostAddressesAsync(
+                    context.DnsEndPoint.Host,
+                    AddressFamily.InterNetwork,
+                    cancellationToken);
+
+                if (addresses.Length == 0)
+                {
+                    throw new HttpRequestException($"No IPv4 address found for {context.DnsEndPoint.Host}.");
+                }
+
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
+                {
+                    NoDelay = true
+                };
+
+                try
+                {
+                    await socket.ConnectAsync(
+                        new IPEndPoint(addresses[0], context.DnsEndPoint.Port),
+                        cancellationToken);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            }
         });
         services.AddScoped<IPayOSClient, PayOSClient>();
         services.AddScoped<IPayOSWebhookSignatureVerifier, PayOSWebhookSignatureVerifier>();
@@ -103,6 +177,22 @@ public static class DependencyInjection
         {
             services.AddScoped<IVnptEkycClient, RealVnptEkycClient>();
         }
+
+        services.Configure<ESignOptions>(configuration.GetSection(ESignOptions.SectionName));
+        services.AddHttpClient(ESignProviderClient.HttpClientName, (provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<ESignOptions>>().Value;
+            var baseUrl = options.BaseUrl; // or ProductionBaseUrl based on environment if needed, for now just BaseUrl
+            if (!string.IsNullOrEmpty(baseUrl))
+            {
+                client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+            }
+            client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        });
+
+        services.AddScoped<IESignProviderClient, ESignProviderClient>();
+
+        services.AddScoped<IESignWebhookVerifier, ESignWebhookVerifier>();
 
         return services;
     }

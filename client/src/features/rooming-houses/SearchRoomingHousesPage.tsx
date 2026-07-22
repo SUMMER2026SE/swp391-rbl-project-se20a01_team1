@@ -1,10 +1,11 @@
+import { Alert } from '../../shared/components/ui/Alert';
 import { useEffect, useMemo, useState, useRef, type CSSProperties, type FormEvent } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ROUTE_PATHS } from '../../app/router/routePaths';
 import { getApiErrorMessage } from '../../shared/api/apiError';
-import { toAssetUrl } from '../../shared/api/assets';
+import { toPublicListingImageUrl } from '../../shared/api/assets';
 import { Button } from '../../shared/components/ui/Button';
 import { HomeHeader } from '../../shared/components/layout/HomeHeader';
 import { searchPublicRoomingHouses, getAmenities, searchLocationAddress, suggestLocationAddresses } from './api';
@@ -15,7 +16,10 @@ import { env } from '../../config/env';
 import SearchSuggestionBox from './components/SearchSuggestionBox';
 import { LocationFilterPanel } from './components/LocationFilterPanel';
 import RentalAiChatbot from './components/RentalAiChatbot';
+import TenantMapPreview from './components/TenantMapPreview';
+import FavoriteButton from './components/FavoriteButton';
 import { saveRecentSearch } from './searchRecentStorage';
+import { saveSearchBehavior } from './rentalBehaviorStorage';
 import './SearchRoomingHousesPage.css';
 
 const DEFAULT_PAGE_SIZE = 12;
@@ -37,6 +41,7 @@ export default function SearchRoomingHousesPage() {
   const currentSearchPath = `${location.pathname}${location.search}`;
   const query = useMemo(() => buildSearchParams(searchParams), [searchParams]);
   const searchCacheKey = useMemo(() => paramsToUrl(query).toString(), [query]);
+  const behaviorCaptureKey = useMemo(() => buildBehaviorCaptureKey(query, searchParams), [query, searchParams]);
   const nearbyLabelParam = searchParams.get('nearbyLabel')?.trim() ?? '';
   
   const [result, setResult] = useState<PagedResult<RoomingHouseSearchItem> | null>(
@@ -281,6 +286,13 @@ export default function SearchRoomingHousesPage() {
       cancelled = true;
     };
   }, [query, searchCacheKey]);
+
+  useEffect(() => {
+    const behaviorParams = buildBehaviorParams(query, nearbyLabelParam);
+    if (hasSearchBehavior(behaviorParams)) {
+      saveSearchBehavior(behaviorParams);
+    }
+  }, [behaviorCaptureKey, nearbyLabelParam, query]);
 
   useEffect(() => {
     return () => {
@@ -1301,7 +1313,7 @@ export default function SearchRoomingHousesPage() {
           {loading ? (
             <div className="search-page__state">Đang tải kết quả...</div>
           ) : error ? (
-            <div className="search-page__state search-page__state--error">{error}</div>
+            <Alert type="error">{error}</Alert>
           ) : !result || result.items.length === 0 ? (
             <div className="search-page__state">Không tìm thấy khu trọ nào phù hợp với bộ lọc của bạn.</div>
           ) : (
@@ -1320,10 +1332,14 @@ export default function SearchRoomingHousesPage() {
                   >
                     <div className="search-result-card__image-container">
                       {item.coverImageUrl ? (
-                        <img src={toAssetUrl(item.coverImageUrl)} alt={item.name} />
+                        <img src={toPublicListingImageUrl(item.coverImageUrl)} alt={item.name} />
                       ) : (
                         <div className="search-result-card__placeholder">Chưa có ảnh</div>
                       )}
+                      
+                      <div className="search-result-card__favorite-wrapper" style={{ position: 'absolute', top: '12px', right: '12px' }}>
+                        <FavoriteButton roomingHouseId={item.id} />
+                      </div>
                       {item.distanceKm != null && (
                         <span className="distance-badge">
                           Cách {(item.distanceKm).toFixed(1)} km
@@ -1488,6 +1504,49 @@ function preserveNearbyLabel(
   if (normalizedLabel) {
     search.set('nearbyLabel', normalizedLabel);
   }
+}
+
+function buildBehaviorCaptureKey(query: RoomingHouseSearchParams, searchParams: URLSearchParams) {
+  const behaviorParams = buildBehaviorParams(query, searchParams.get('nearbyLabel')?.trim() ?? '');
+  return JSON.stringify({
+    q: behaviorParams.q ?? null,
+    provinceCode: behaviorParams.provinceCode ?? null,
+    wardCode: behaviorParams.wardCode ?? null,
+    minPrice: behaviorParams.minPrice ?? null,
+    maxPrice: behaviorParams.maxPrice ?? null,
+    minAreaM2: behaviorParams.minAreaM2 ?? null,
+    maxAreaM2: behaviorParams.maxAreaM2 ?? null,
+    amenityIds: behaviorParams.amenityIds ?? [],
+    roomAmenityIds: behaviorParams.roomAmenityIds ?? [],
+  });
+}
+
+function buildBehaviorParams(query: RoomingHouseSearchParams, nearbyLabel: string): RoomingHouseSearchParams {
+  return {
+    q: query.q || nearbyLabel || undefined,
+    provinceCode: query.provinceCode,
+    wardCode: query.wardCode,
+    minPrice: query.minPrice,
+    maxPrice: query.maxPrice,
+    minAreaM2: query.minAreaM2,
+    maxAreaM2: query.maxAreaM2,
+    amenityIds: query.amenityIds,
+    roomAmenityIds: query.roomAmenityIds,
+  };
+}
+
+function hasSearchBehavior(params: RoomingHouseSearchParams) {
+  return Boolean(
+    params.q ||
+    params.provinceCode ||
+    params.wardCode ||
+    params.minPrice ||
+    params.maxPrice ||
+    params.minAreaM2 ||
+    params.maxAreaM2 ||
+    params.amenityIds?.length ||
+    params.roomAmenityIds?.length
+  );
 }
 
 function buildLocationButtonLabel(

@@ -5,6 +5,7 @@ import { getApiErrorMessage } from '../../../shared/api/apiError';
 import { Alert } from '../../../shared/components/ui/Alert';
 import { Button } from '../../../shared/components/ui/Button';
 import { LoadingState } from '../../../shared/components/feedback/LoadingState';
+import { PrivateMediaImage } from '../../../shared/components/media/PrivateMediaImage';
 import { kycApi } from '../services/kycApi';
 import type { KycHistoryItemResponse, KycStatusResponse } from '../types/kyc.types';
 import '../../profile/pages/MyProfilePage.css';
@@ -81,8 +82,8 @@ export function KycStatusPage() {
   };
 
   return (
-    <main className="auth-page" style={{ padding: '40px 24px', background: '#f4f7fb', minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
-      <section className="auth-panel kyc-panel" style={{ width: '100%', maxWidth: '800px', background: 'transparent', boxShadow: 'none', padding: 0 }}>
+    <main className="auth-page kyc-status-auth-page" style={{ padding: '40px 24px', background: '#f4f7fb', minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
+      <section className="auth-panel kyc-panel kyc-status-page-container" style={{ width: '100%', maxWidth: '800px', background: 'transparent', boxShadow: 'none' }}>
         <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'flex-start' }}>
           <button
             type="button"
@@ -258,6 +259,31 @@ export function KycStatusPage() {
                   <span className="ekyc-label">Địa chỉ OCR</span>
                   <span className="ekyc-value">{status.ocrAddress || 'Chưa có'}</span>
                 </div>
+              </div>
+            </div>
+
+            <div className="kyc-document-images" aria-label="Ảnh hồ sơ KYC">
+              <h2>Ảnh đã gửi</h2>
+              <div className="kyc-document-images__grid">
+                {[
+                  { label: 'Mặt trước giấy tờ', mediaAssetId: status.frontMediaAssetId },
+                  { label: 'Mặt sau giấy tờ', mediaAssetId: status.backMediaAssetId },
+                  { label: 'Ảnh chân dung', mediaAssetId: status.selfieMediaAssetId }
+                ].map(({ label, mediaAssetId }) => (
+                  <figure className="kyc-document-image" key={label}>
+                    {mediaAssetId ? (
+                      <PrivateMediaImage
+                        mediaAssetId={mediaAssetId}
+                        alt={label}
+                        loadingLabel={`Đang tải ${label.toLowerCase()}...`}
+                        errorLabel={`Không tải được ${label.toLowerCase()}.`}
+                      />
+                    ) : (
+                      <span>Không có ảnh</span>
+                    )}
+                    <figcaption>{label}</figcaption>
+                  </figure>
+                ))}
               </div>
             </div>
 

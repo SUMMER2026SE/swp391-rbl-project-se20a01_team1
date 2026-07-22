@@ -95,7 +95,7 @@ public static class WalletQaDataSeeder
             context,
             tenant.Id,
             TenantWalletId,
-            500_000m,
+            50_000_000m,
             TenantTopUpTransactionId,
             TenantAdjustmentTransactionId,
             cancellationToken);
@@ -104,7 +104,7 @@ public static class WalletQaDataSeeder
             context,
             landlord.Id,
             LandlordWalletId,
-            100_000m,
+            50_000_000m,
             LandlordTopUpTransactionId,
             LandlordAdjustmentTransactionId,
             cancellationToken);
@@ -211,9 +211,6 @@ public static class WalletQaDataSeeder
             DocumentType = KycDocumentType.CCCD,
             EkycProvider = EkycProvider.VNPT,
             EkycSessionId = $"wallet-qa-approved-{user.Id:N}",
-            FrontImageObjectKey = $"demo/kyc/{user.Id:N}/front.jpg",
-            BackImageObjectKey = $"demo/kyc/{user.Id:N}/back.jpg",
-            SelfieImageObjectKey = $"demo/kyc/{user.Id:N}/selfie.jpg",
             SelfieCaptureMethod = SelfieCaptureMethod.Upload,
             OcrFullName = fullName,
             OcrCitizenIdMasked = citizenIdMasked,

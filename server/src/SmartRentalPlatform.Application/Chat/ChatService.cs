@@ -1,0 +1,1623 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using SmartRentalPlatform.Application.Common.Exceptions;
+using SmartRentalPlatform.Application.Common.Interfaces;
+using SmartRentalPlatform.Application.Common.Media;
+using SmartRentalPlatform.Contracts.Chat.Requests;
+using SmartRentalPlatform.Contracts.Chat.Responses;
+using SmartRentalPlatform.Domain.Entities.Chat;
+using SmartRentalPlatform.Domain.Entities.Media;
+using SmartRentalPlatform.Domain.Entities.Users;
+using SmartRentalPlatform.Domain.Enums.Chat;
+using SmartRentalPlatform.Domain.Enums.Media;
+using SmartRentalPlatform.Domain.Enums.Notifications;
+using SmartRentalPlatform.Domain.Enums.RentalContracts;
+using SmartRentalPlatform.Domain.Enums.Users;
+using static SmartRentalPlatform.Application.Chat.ChatResponseMapper;
+
+namespace SmartRentalPlatform.Application.Chat;
+
+public sealed class ChatService : IChatService
+{
+    private const int MaxTextLength = 2000;
+    private const int MaxIconLength = 20;
+    private const int MaxMessagesLimit = 100;
+
+    private readonly IAppDbContext context;
+    private readonly INotificationService notificationService;
+    private readonly IChatPresenceTracker presenceTracker;
+    private readonly ILogger<ChatService>? logger;
+
+    public ChatService(
+        IAppDbContext context,
+        INotificationService notificationService,
+        IChatPresenceTracker presenceTracker,
+        ILogger<ChatService>? logger = null)
+    {
+        this.context = context;
+        this.notificationService = notificationService;
+        this.presenceTracker = presenceTracker;
+        this.logger = logger;
+    }
+
+    public async Task<List<ConversationResponse>> GetConversationsAsync(Guid currentUserId, string? box = null, CancellationToken cancellationToken = default)
+    {
+        var status = box?.ToLower() == "pending"
+            ? ConversationParticipantInboxStatus.Pending
+            : ConversationParticipantInboxStatus.Main;
+
+        var conversations = await BaseConversationQuery()
+            .Where(x => x.Participants.Any(p => p.UserId == currentUserId && p.LeftAt == null && p.InboxStatus == status) &&
+                (x.LastMessageAt != null || x.Type == ConversationType.Group))
+            .OrderByDescending(x => x.LastMessageAt ?? x.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
+        return conversations.Select(x => MapConversation(x, currentUserId)).ToList();
+    }
+
+    public async Task<ConversationResponse> CreateDirectConversationAsync(Guid currentUserId, CreateDirectConversationRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.OtherUserId == Guid.Empty)
+            throw new BadRequestException("CHAT_INVALID_USER", "Vui lòng chọn người nhận.");
+
+        if (request.OtherUserId == currentUserId)
+            throw new BadRequestException("CHAT_SELF_CHAT", "Không thể tạo cuộc trò chuyện với chính mình.");
+
+        var users = await context.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Where(x => (x.Id == currentUserId || x.Id == request.OtherUserId) && x.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+
+        var currentUser = users.FirstOrDefault(x => x.Id == currentUserId) ?? throw new NotFoundException("CHAT_USER_NOT_FOUND", "Không tìm thấy người dùng hiện tại.");
+        var otherUser = users.FirstOrDefault(x => x.Id == request.OtherUserId) ?? throw new NotFoundException("CHAT_USER_NOT_FOUND", "Không tìm thấy người dùng cần chat.");
+
+        EnsureActiveUser(currentUser);
+        EnsureActiveUser(otherUser);
+
+        var (userAId, userBId) = NormalizePair(currentUserId, request.OtherUserId);
+        var existing = await BaseConversationQuery()
+            .FirstOrDefaultAsync(x => x.Type == ConversationType.Direct && x.DirectUserAId == userAId && x.DirectUserBId == userBId, cancellationToken);
+
+        if (existing is not null)
+        {
+            var hasConversationHistory = await context.ChatMessages
+                .AsNoTracking()
+                .AnyAsync(x => x.ConversationId == existing.Id, cancellationToken);
+            var pMe = existing.Participants.FirstOrDefault(x => x.UserId == currentUserId);
+            var pOther = existing.Participants.FirstOrDefault(x => x.UserId == request.OtherUserId);
+
+            if (pMe != null)
+            {
+                pMe.LeftAt = null;
+                pMe.InboxStatus = ConversationParticipantInboxStatus.Main;
+                pMe.InboxStatusUpdatedAt = DateTimeOffset.UtcNow;
+                pMe.InboxStatusUpdatedByUserId = currentUserId;
+                pMe.AddedByUserId = currentUserId;
+            }
+            if (pOther != null)
+            {
+                pOther.LeftAt = null;
+                if (pOther.InboxStatus != ConversationParticipantInboxStatus.Rejected)
+                {
+                    pOther.InboxStatus = hasConversationHistory
+                        ? ConversationParticipantInboxStatus.Main
+                        : ConversationParticipantInboxStatus.Pending;
+                    pOther.InboxStatusUpdatedAt = DateTimeOffset.UtcNow;
+                    pOther.InboxStatusUpdatedByUserId = currentUserId;
+                }
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+            return MapConversation(existing, currentUserId);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var creatorPart = CreateParticipant(currentUserId, ConversationParticipantRole.Member, ConversationParticipantSource.Manual, currentUserId, now);
+        creatorPart.InboxStatus = ConversationParticipantInboxStatus.Main;
+
+        var recipientPart = CreateParticipant(request.OtherUserId, ConversationParticipantRole.Member, ConversationParticipantSource.Manual, currentUserId, now);
+        recipientPart.InboxStatus = ConversationParticipantInboxStatus.Pending;
+
+        var conversation = new Conversation
+        {
+            Id = Guid.NewGuid(),
+            Type = ConversationType.Direct,
+            DirectUserAId = userAId,
+            DirectUserBId = userBId,
+            CreatedByUserId = currentUserId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Participants = { creatorPart, recipientPart }
+        };
+
+        context.Conversations.Add(conversation);
+        await context.SaveChangesAsync(cancellationToken);
+
+        var saved = await LoadConversationAsync(conversation.Id, cancellationToken);
+        return MapConversation(saved, currentUserId);
+    }
+
+    public async Task<ConversationResponse> CreateGroupConversationAsync(Guid currentUserId, CreateGroupConversationRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureLandlordAsync(currentUserId, cancellationToken);
+
+        var now = DateTimeOffset.UtcNow;
+        var conversationId = Guid.NewGuid();
+        var avatarMediaAsset = await ResolveConversationAvatarAsync(
+            currentUserId,
+            conversationId,
+            request.AvatarMediaAssetId,
+            now,
+            cancellationToken);
+        var conversation = new Conversation
+        {
+            Id = conversationId,
+            Type = ConversationType.Group,
+            Title = NormalizeTitle(request.Title, "Nhóm trò chuyện"),
+            RoomingHouseId = request.RoomingHouseId,
+            AvatarUrl = avatarMediaAsset is null ? NormalizeOptional(request.AvatarUrl) : null,
+            AvatarMediaAssetId = avatarMediaAsset?.Id,
+            CreatedByUserId = currentUserId,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        conversation.Participants.Add(CreateParticipant(currentUserId, ConversationParticipantRole.Owner, ConversationParticipantSource.Manual, currentUserId, now));
+
+        foreach (var userId in request.ParticipantUserIds.Where(x => x != Guid.Empty && x != currentUserId).Distinct())
+        {
+            await EnsureActiveUserExistsAsync(userId, cancellationToken);
+            await EnsureUserCanBeAddedByLandlordAsync(currentUserId, userId, request.RoomingHouseId, cancellationToken);
+            conversation.Participants.Add(CreateParticipant(userId, ConversationParticipantRole.Member, ConversationParticipantSource.RoomQuickPick, currentUserId, now));
+        }
+
+        context.Conversations.Add(conversation);
+        await context.SaveChangesAsync(cancellationToken);
+
+        var saved = await LoadConversationAsync(conversation.Id, cancellationToken);
+        return MapConversation(saved, currentUserId);
+    }
+
+    public async Task<ConversationResponse> UpdateConversationAsync(Guid currentUserId, Guid conversationId, UpdateConversationRequest request, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureOwner(currentUserId, conversation);
+        EnsureGroup(conversation);
+
+        if (request.ClearAvatar &&
+            (request.AvatarMediaAssetId.HasValue || request.AvatarUrl is not null))
+        {
+            throw new BadRequestException(
+                "CHAT_AVATAR_UPDATE_CONFLICT",
+                "Không thể đồng thời xóa và cập nhật avatar nhóm.");
+        }
+
+        if (request.Title is not null)
+        {
+            conversation.Title = NormalizeTitle(request.Title, conversation.Title ?? "Nhóm trò chuyện");
+        }
+
+        if (request.ClearAvatar)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var previousAvatarMediaAssetId = conversation.AvatarMediaAssetId;
+
+            conversation.AvatarMediaAssetId = null;
+            conversation.AvatarUrl = null;
+
+            if (previousAvatarMediaAssetId.HasValue)
+            {
+                await RetireConversationAvatarAsync(
+                    previousAvatarMediaAssetId.Value,
+                    conversation.Id,
+                    now,
+                    cancellationToken);
+            }
+        }
+        else if (request.AvatarMediaAssetId.HasValue)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var previousAvatarMediaAssetId = conversation.AvatarMediaAssetId;
+            var avatarMediaAsset = await ResolveConversationAvatarAsync(
+                currentUserId,
+                conversation.Id,
+                request.AvatarMediaAssetId,
+                now,
+                cancellationToken);
+
+            conversation.AvatarMediaAssetId = avatarMediaAsset?.Id;
+            conversation.AvatarUrl = null;
+
+            if (previousAvatarMediaAssetId.HasValue &&
+                previousAvatarMediaAssetId != conversation.AvatarMediaAssetId)
+            {
+                await RetireConversationAvatarAsync(
+                    previousAvatarMediaAssetId.Value,
+                    conversation.Id,
+                    now,
+                    cancellationToken);
+            }
+        }
+        else if (request.AvatarUrl is not null)
+        {
+            conversation.AvatarUrl = NormalizeOptional(request.AvatarUrl);
+        }
+
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<List<ChatUserResponse>> GetLandlordQuickContactsAsync(Guid landlordUserId, CancellationToken cancellationToken = default)
+    {
+        await EnsureLandlordAsync(landlordUserId, cancellationToken);
+
+        var contracts = await context.RentalContracts
+            .AsNoTracking()
+            .Include(x => x.Room).ThenInclude(x => x.RoomingHouse)
+            .Include(x => x.MainTenantUser).ThenInclude(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Include(x => x.Occupants).ThenInclude(x => x.User).ThenInclude(x => x!.UserRoles).ThenInclude(x => x.Role)
+            .Where(x => x.DeletedAt == null && x.Room.RoomingHouse.LandlordUserId == landlordUserId)
+            .ToListAsync(cancellationToken);
+
+        var users = new Dictionary<Guid, ChatUserResponse>();
+        foreach (var contract in contracts)
+        {
+            AddQuickContact(users, contract.MainTenantUser, $"Phòng {contract.Room.RoomNumber}");
+            foreach (var occupant in contract.Occupants.Where(x => x.User is not null))
+            {
+                AddQuickContact(users, occupant.User!, $"Phòng {contract.Room.RoomNumber}");
+            }
+        }
+
+        return users.Values.OrderBy(x => x.DisplayName).ToList();
+    }
+
+    public async Task<List<ChatUserResponse>> SearchUsersByEmailAsync(Guid currentUserId, string email, Guid? roomingHouseId = null, CancellationToken cancellationToken = default)
+    {
+        var normalized = NormalizeEmail(email);
+        if (normalized.Length < 3)
+            return new List<ChatUserResponse>();
+
+        var currentUser = await context.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+            .FirstOrDefaultAsync(x => x.Id == currentUserId && x.DeletedAt == null, cancellationToken)
+            ?? throw new NotFoundException("CHAT_USER_NOT_FOUND", "Không tìm thấy người dùng hiện tại.");
+
+        if (roomingHouseId.HasValue && HasRole(currentUser, RoleName.Landlord))
+        {
+            return await GetUsersInRoomingHouseAsync(roomingHouseId.Value, currentUserId, cancellationToken);
+        }
+
+        var users = await context.Users
+            .AsNoTracking()
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Where(x =>
+                x.Id != currentUserId &&
+                x.DeletedAt == null &&
+                x.Status == UserStatus.Active &&
+                x.Email.ToUpper().Contains(normalized))
+            .OrderBy(x => x.Email)
+            .Distinct()
+            .Take(10)
+            .ToListAsync(cancellationToken);
+
+        return users.Select(x =>
+        {
+            var label = HasRole(x, RoleName.Landlord)
+                ? "Chủ trọ"
+                : HasRole(x, RoleName.Admin)
+                    ? "Quản trị viên"
+                    : "Người dùng";
+            return MapChatUser(x, label);
+        }).ToList();
+    }
+
+    public async Task<ConversationResponse> AddParticipantsAsync(Guid currentUserId, Guid conversationId, AddConversationParticipantsRequest request, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureOwner(currentUserId, conversation);
+        EnsureGroup(conversation);
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var userId in request.UserIds.Where(x => x != Guid.Empty && x != currentUserId).Distinct())
+        {
+            await EnsureActiveUserExistsAsync(userId, cancellationToken);
+            var participant = conversation.Participants.FirstOrDefault(x => x.UserId == userId);
+            if (participant is null)
+            {
+                conversation.Participants.Add(CreateParticipant(userId, ConversationParticipantRole.Member, ConversationParticipantSource.ContractEmail, currentUserId, now));
+            }
+            else
+            {
+                participant.LeftAt = null;
+                participant.JoinedAt = now;
+                participant.AddedByUserId = currentUserId;
+                participant.Source = ConversationParticipantSource.ContractEmail;
+            }
+        }
+
+        conversation.UpdatedAt = now;
+        await context.SaveChangesAsync(cancellationToken);
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<ConversationResponse> RemoveParticipantAsync(Guid currentUserId, Guid conversationId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureOwner(currentUserId, conversation);
+        EnsureGroup(conversation);
+
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == userId && x.LeftAt == null)
+            ?? throw new NotFoundException("CHAT_PARTICIPANT_NOT_FOUND", "Không tìm thấy thành viên trong nhóm.");
+
+        if (participant.Role == ConversationParticipantRole.Owner)
+            throw new BadRequestException("CHAT_OWNER_REMOVE_INVALID", "Không thể xóa chủ nhóm.");
+
+        participant.LeftAt = DateTimeOffset.UtcNow;
+        participant.UnreadCount = 0;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<ConversationResponse> LeaveConversationAsync(Guid currentUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+
+        var participant = EnsureActiveParticipant(currentUserId, conversation);
+        if (participant.Role == ConversationParticipantRole.Owner)
+        {
+            var activeOwnerCount = conversation.Participants.Count(x => x.LeftAt == null && x.Role == ConversationParticipantRole.Owner);
+            if (activeOwnerCount <= 1)
+            {
+                throw new BadRequestException(
+                    "CHAT_OWNER_LEAVE_REQUIRES_TRANSFER",
+                    "Bạn là trưởng nhóm duy nhất. Vui lòng trao quyền trưởng nhóm cho thành viên khác trước khi rời nhóm.");
+            }
+        }
+
+        participant.LeftAt = DateTimeOffset.UtcNow;
+        participant.UnreadCount = 0;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<ConversationResponse> CloseConversationAsync(Guid currentUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureOwner(currentUserId, conversation);
+        EnsureGroup(conversation);
+
+        conversation.IsClosed = true;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<List<ChatMessageResponse>> GetMessagesAsync(Guid currentUserId, Guid conversationId, DateTimeOffset? before, int limit = 30, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        var currentParticipant = EnsureParticipant(currentUserId, conversation);
+
+        limit = Math.Clamp(limit, 1, MaxMessagesLimit);
+        var query = context.ChatMessages
+            .AsNoTracking()
+            .Include(x => x.Sender)
+            .Where(x => x.ConversationId == conversationId && x.CreatedAt >= currentParticipant.JoinedAt);
+
+        if (before.HasValue)
+            query = query.Where(x => x.CreatedAt < before.Value);
+
+        var messages = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+
+        return messages.OrderBy(x => x.CreatedAt).Select(x => MapMessage(x, currentUserId)).ToList();
+    }
+
+    public async Task<SendChatMessageResponse> SendMessageAsync(Guid currentUserId, Guid conversationId, SendChatMessageRequest request, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        if (conversation.IsClosed)
+            throw new BadRequestException("CHAT_CONVERSATION_CLOSED", "Cuộc trò chuyện đã đóng.");
+
+        var senderParticipant = EnsureParticipant(currentUserId, conversation);
+        if (conversation.Type == ConversationType.Group && senderParticipant.LeftAt != null)
+            throw new ForbiddenException("CHAT_FORBIDDEN", "Bạn không có quyền truy cập cuộc trò chuyện này.");
+
+        if (senderParticipant.InboxStatus == ConversationParticipantInboxStatus.Pending)
+        {
+            throw new BadRequestException("CHAT_PENDING_APPROVAL", "Yêu cầu nhắn tin của bạn đang chờ phê duyệt. Bạn không thể gửi tin nhắn lúc này.");
+        }
+
+        if (conversation.Type == ConversationType.Direct)
+        {
+            var otherParticipant = conversation.Participants.FirstOrDefault(p => p.UserId != currentUserId);
+            if (otherParticipant != null)
+            {
+                if (otherParticipant.InboxStatus == ConversationParticipantInboxStatus.Rejected || senderParticipant.InboxStatus == ConversationParticipantInboxStatus.Rejected)
+                {
+                    throw new BadRequestException("CHAT_REQUEST_REJECTED", "Cuộc trò chuyện này đã bị từ chối.");
+                }
+            }
+        }
+
+        var messageType = ParseMessageType(request.MessageType);
+        ValidateMessage(messageType, request);
+
+        var now = DateTimeOffset.UtcNow;
+        var messageId = Guid.NewGuid();
+        var mediaAsset = await ResolveChatAttachmentAsync(
+            currentUserId,
+            messageId,
+            messageType,
+            request.MediaAssetId,
+            now,
+            cancellationToken);
+        var message = new ChatMessage
+        {
+            Id = messageId,
+            ConversationId = conversation.Id,
+            SenderId = currentUserId,
+            MediaAssetId = mediaAsset?.Id,
+            MessageType = messageType,
+            Content = NormalizeOptional(request.Content),
+            FileName = messageType == ChatMessageType.File ? mediaAsset?.OriginalFileName : null,
+            FileContentType = messageType == ChatMessageType.File ? mediaAsset?.ContentType : null,
+            FileSize = messageType == ChatMessageType.File ? mediaAsset?.FileSize : null,
+            CreatedAt = now
+        };
+
+        if (senderParticipant.LeftAt != null)
+        {
+            senderParticipant.LeftAt = null;
+            senderParticipant.JoinedAt = now;
+        }
+
+        context.ChatMessages.Add(message);
+        conversation.LastMessageAt = now;
+        conversation.LastMessagePreview = BuildPreview(messageType, message.Content);
+        conversation.UpdatedAt = now;
+
+        var recipientIds = new List<Guid>();
+        foreach (var participant in conversation.Participants.Where(x => x.UserId != currentUserId))
+        {
+            if (participant.InboxStatus == ConversationParticipantInboxStatus.Rejected)
+                continue;
+
+            if (participant.LeftAt != null)
+            {
+                participant.LeftAt = null;
+                participant.JoinedAt = now;
+            }
+            participant.UnreadCount += 1;
+            recipientIds.Add(participant.UserId);
+        }
+
+        try
+        {
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            if (mediaAsset is not null && await IsChatMediaAlreadyLinkedAsync(mediaAsset.Id))
+            {
+                throw new BadRequestException(
+                    "CHAT_MEDIA_ALREADY_LINKED",
+                    "Tệp đính kèm đã được sử dụng hoặc không còn sẵn sàng.");
+            }
+
+            throw;
+        }
+
+        var savedMessage = await context.ChatMessages
+            .AsNoTracking()
+            .Include(x => x.Sender)
+            .FirstAsync(x => x.Id == message.Id, CancellationToken.None);
+
+        foreach (var recipientId in recipientIds)
+        {
+            if (!presenceTracker.IsUserViewingConversation(conversationId, recipientId))
+            {
+                try
+                {
+                    await notificationService.CreateAsync(
+                        recipientId,
+                        NotificationType.NewChatMessage,
+                        "Tin nhắn mới",
+                        BuildNotificationBody(savedMessage),
+                        conversationId.ToString(),
+                        "Conversation",
+                        CancellationToken.None);
+                }
+                catch (Exception exception)
+                {
+                    logger?.LogWarning(
+                        exception,
+                        "Failed to create chat notification for user {RecipientUserId} after message {MessageId} was committed.",
+                        recipientId,
+                        savedMessage.Id);
+                }
+            }
+        }
+
+        var refreshed = await LoadConversationAsync(conversationId, CancellationToken.None);
+        var response = MapMessage(savedMessage, currentUserId);
+        response.ClientMessageId = request.ClientMessageId;
+
+        return new SendChatMessageResponse
+        {
+            Message = response,
+            Conversation = MapConversation(refreshed, currentUserId),
+            RecipientUserIds = recipientIds
+        };
+    }
+
+    public async Task<ConversationResponse> MarkAsReadAsync(Guid currentUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        var participant = EnsureActiveParticipant(currentUserId, conversation);
+        participant.UnreadCount = 0;
+        participant.LastReadAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task EnsureCanJoinConversationAsync(Guid currentUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var canJoin = await context.ConversationParticipants
+            .AnyAsync(x => x.ConversationId == conversationId && x.UserId == currentUserId && x.LeftAt == null && !x.Conversation.IsClosed, cancellationToken);
+
+        if (!canJoin)
+            throw new ForbiddenException("CHAT_FORBIDDEN", "Bạn không có quyền tham gia cuộc trò chuyện này.");
+    }
+
+    private IQueryable<Conversation> BaseConversationQuery()
+    {
+        return context.Conversations
+            .Include(x => x.Participants).ThenInclude(x => x.User)
+            .Include(x => x.Participants).ThenInclude(x => x.User).ThenInclude(x => x.UserRoles).ThenInclude(x => x.Role);
+    }
+
+    private async Task<Conversation> LoadConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+    {
+        return await BaseConversationQuery()
+            .FirstOrDefaultAsync(x => x.Id == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_CONVERSATION_NOT_FOUND", "Không tìm thấy cuộc trò chuyện.");
+    }
+
+    private static ConversationParticipant CreateParticipant(Guid userId, ConversationParticipantRole role, ConversationParticipantSource source, Guid addedByUserId, DateTimeOffset now)
+    {
+        return new ConversationParticipant
+        {
+            UserId = userId,
+            Role = role,
+            Source = source,
+            AddedByUserId = addedByUserId,
+            JoinedAt = now
+        };
+    }
+
+    private static void ReactivateParticipant(Conversation conversation, Guid userId, Guid addedByUserId)
+    {
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == userId);
+        if (participant is not null)
+        {
+            participant.LeftAt = null;
+            participant.AddedByUserId = addedByUserId;
+        }
+    }
+
+    private static (Guid UserAId, Guid UserBId) NormalizePair(Guid left, Guid right)
+    {
+        return left.CompareTo(right) <= 0 ? (left, right) : (right, left);
+    }
+
+    private async Task EnsureLandlordAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var isLandlord = await context.UserRoles.AnyAsync(x => x.UserId == userId && x.Role.Name == RoleName.Landlord, cancellationToken);
+        if (!isLandlord)
+            throw new ForbiddenException("CHAT_LANDLORD_REQUIRED", "Chỉ chủ trọ mới có quyền thực hiện thao tác này.");
+    }
+
+    private async Task EnsureUserCanBeAddedByLandlordAsync(Guid landlordUserId, Guid userId, Guid? roomingHouseId, CancellationToken cancellationToken)
+    {
+        var allowedQuery = context.RentalContracts
+            .AsNoTracking()
+            .Where(x => x.DeletedAt == null &&
+                x.Room.RoomingHouse.LandlordUserId == landlordUserId &&
+                (x.MainTenantUserId == userId || x.Occupants.Any(o => o.UserId == userId)));
+
+        if (roomingHouseId.HasValue)
+        {
+            allowedQuery = allowedQuery.Where(x => x.Room.RoomingHouseId == roomingHouseId.Value);
+        }
+
+        var isAllowed = await allowedQuery.AnyAsync(cancellationToken);
+
+        if (!isAllowed)
+            throw new ForbiddenException("CHAT_MEMBER_OUT_OF_SCOPE", "Người dùng này không thuộc khu trọ/hợp đồng của bạn.");
+
+        var user = await context.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == userId && x.DeletedAt == null, cancellationToken)
+            ?? throw new NotFoundException("CHAT_USER_NOT_FOUND", "Không tìm thấy người dùng.");
+        EnsureActiveUser(user);
+    }
+
+    private async Task EnsureActiveUserExistsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await context.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == userId && x.DeletedAt == null, cancellationToken)
+            ?? throw new NotFoundException("CHAT_USER_NOT_FOUND", "Không tìm thấy người dùng.");
+
+        EnsureActiveUser(user);
+    }
+
+    private static void EnsureActiveUser(User user)
+    {
+        if (user.Status != UserStatus.Active || user.DeletedAt != null)
+            throw new ForbiddenException("CHAT_USER_INACTIVE", "Tài khoản không còn hoạt động.");
+    }
+
+    private static bool HasRole(User user, RoleName role)
+    {
+        return user.UserRoles.Any(x => x.Role.Name == role);
+    }
+
+    private static void EnsureGroup(Conversation conversation)
+    {
+        if (conversation.Type != ConversationType.Group)
+            throw new BadRequestException("CHAT_GROUP_REQUIRED", "Thao tác này chỉ áp dụng cho nhóm chat.");
+    }
+
+    private static void EnsureOwner(Guid currentUserId, Conversation conversation)
+    {
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == currentUserId && x.LeftAt == null);
+        if (participant?.Role != ConversationParticipantRole.Owner)
+            throw new ForbiddenException("CHAT_OWNER_REQUIRED", "Chỉ chủ nhóm mới có quyền thực hiện thao tác này.");
+    }
+
+    private static ConversationParticipant EnsureActiveParticipant(Guid currentUserId, Conversation conversation)
+    {
+        return conversation.Participants.FirstOrDefault(x => x.UserId == currentUserId && x.LeftAt == null)
+            ?? throw new ForbiddenException("CHAT_FORBIDDEN", "Bạn không có quyền truy cập cuộc trò chuyện này.");
+    }
+
+    private static ChatMessageType ParseMessageType(string value)
+    {
+        if (!Enum.TryParse<ChatMessageType>(value, true, out var type))
+            throw new BadRequestException("CHAT_MESSAGE_TYPE_INVALID", "Loại tin nhắn không hợp lệ.");
+
+        return type;
+    }
+
+    private static void ValidateMessage(ChatMessageType type, SendChatMessageRequest request)
+    {
+        var content = request.Content?.Trim();
+
+        if (type == ChatMessageType.Text && string.IsNullOrWhiteSpace(content))
+            throw new BadRequestException("CHAT_TEXT_REQUIRED", "Nội dung tin nhắn không được để trống.");
+        if (type == ChatMessageType.Text && content!.Length > MaxTextLength)
+            throw new BadRequestException("CHAT_TEXT_TOO_LONG", "Tin nhắn tối đa 2000 ký tự.");
+        if (type == ChatMessageType.Icon && string.IsNullOrWhiteSpace(content))
+            throw new BadRequestException("CHAT_ICON_REQUIRED", "Vui lòng chọn biểu tượng.");
+        if (type == ChatMessageType.Icon && content!.Length > MaxIconLength)
+            throw new BadRequestException("CHAT_ICON_TOO_LONG", "Biểu tượng không hợp lệ.");
+        if (type == ChatMessageType.Image && !request.MediaAssetId.HasValue)
+            throw new BadRequestException("CHAT_IMAGE_REQUIRED", "Vui lòng tải ảnh trước khi gửi.");
+        if (type == ChatMessageType.File && !request.MediaAssetId.HasValue)
+            throw new BadRequestException("CHAT_FILE_REQUIRED", "Vui lòng chọn tệp tin đính kèm.");
+        if (type is not ChatMessageType.Image and not ChatMessageType.File && request.MediaAssetId.HasValue)
+            throw new BadRequestException("CHAT_MEDIA_NOT_ALLOWED", "Loại tin nhắn này không hỗ trợ tệp đính kèm.");
+    }
+
+    private async Task<MediaAsset?> ResolveChatAttachmentAsync(
+        Guid senderUserId,
+        Guid messageId,
+        ChatMessageType messageType,
+        Guid? mediaAssetId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (messageType is not ChatMessageType.Image and not ChatMessageType.File)
+            return null;
+
+        var mediaAsset = await context.MediaAssets
+            .FirstOrDefaultAsync(x => x.Id == mediaAssetId!.Value, cancellationToken)
+            ?? throw new BadRequestException(
+                "CHAT_MEDIA_NOT_FOUND",
+                "Không tìm thấy tệp đính kèm đã tải lên.");
+
+        if (mediaAsset.OwnerUserId != senderUserId)
+            throw new ForbiddenException(
+                "CHAT_MEDIA_FORBIDDEN",
+                "Bạn không có quyền sử dụng tệp đính kèm này.");
+
+        if (mediaAsset.Scope != MediaScope.ChatAttachment ||
+            mediaAsset.Visibility != MediaVisibility.Private)
+        {
+            throw new BadRequestException(
+                "CHAT_MEDIA_INVALID",
+                "Media asset không phù hợp với tệp đính kèm chat.");
+        }
+
+        if (mediaAsset.Status != MediaStatus.Uploaded ||
+            mediaAsset.LinkedEntityId.HasValue ||
+            !string.IsNullOrWhiteSpace(mediaAsset.LinkedEntityType))
+        {
+            throw new BadRequestException(
+                "CHAT_MEDIA_ALREADY_LINKED",
+                "Tệp đính kèm đã được sử dụng hoặc không còn sẵn sàng.");
+        }
+
+        if (messageType == ChatMessageType.Image &&
+            !mediaAsset.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new BadRequestException(
+                "CHAT_IMAGE_TYPE_INVALID",
+                "Media asset được chọn không phải là ảnh.");
+        }
+
+        mediaAsset.Status = MediaStatus.Linked;
+        mediaAsset.LinkedEntityType = nameof(ChatMessage);
+        mediaAsset.LinkedEntityId = messageId;
+        mediaAsset.DeletedAt = null;
+        mediaAsset.UpdatedAt = now;
+
+        return mediaAsset;
+    }
+
+    private Task<bool> IsChatMediaAlreadyLinkedAsync(Guid mediaAssetId)
+    {
+        return context.ChatMessages
+            .AsNoTracking()
+            .AnyAsync(x => x.MediaAssetId == mediaAssetId, CancellationToken.None);
+    }
+
+    private async Task<MediaAsset?> ResolveConversationAvatarAsync(
+        Guid ownerUserId,
+        Guid conversationId,
+        Guid? mediaAssetId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (!mediaAssetId.HasValue)
+            return null;
+
+        var mediaAsset = await context.MediaAssets
+            .FirstOrDefaultAsync(x => x.Id == mediaAssetId.Value, cancellationToken)
+            ?? throw new BadRequestException(
+                "CHAT_AVATAR_MEDIA_NOT_FOUND",
+                "Không tìm thấy media asset của avatar nhóm.");
+
+        if (mediaAsset.OwnerUserId != ownerUserId)
+            throw new ForbiddenException(
+                "CHAT_AVATAR_MEDIA_FORBIDDEN",
+                "Bạn không có quyền sử dụng avatar media asset này.");
+
+        if (mediaAsset.Scope != MediaScope.Avatar ||
+            mediaAsset.Visibility != MediaVisibility.Public ||
+            !mediaAsset.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new BadRequestException(
+                "CHAT_AVATAR_MEDIA_INVALID",
+                "Media asset được chọn không phải avatar nhóm hợp lệ.");
+        }
+
+        var alreadyLinkedToConversation =
+            mediaAsset.Status == MediaStatus.Linked &&
+            mediaAsset.LinkedEntityType == nameof(Conversation) &&
+            mediaAsset.LinkedEntityId == conversationId;
+
+        if (!alreadyLinkedToConversation &&
+            (mediaAsset.Status != MediaStatus.Uploaded ||
+             mediaAsset.LinkedEntityId.HasValue ||
+             !string.IsNullOrWhiteSpace(mediaAsset.LinkedEntityType)))
+        {
+            throw new BadRequestException(
+                "CHAT_AVATAR_MEDIA_ALREADY_LINKED",
+                "Avatar media asset đã được sử dụng hoặc không còn sẵn sàng.");
+        }
+
+        mediaAsset.Status = MediaStatus.Linked;
+        mediaAsset.LinkedEntityType = nameof(Conversation);
+        mediaAsset.LinkedEntityId = conversationId;
+        mediaAsset.DeletedAt = null;
+        mediaAsset.UpdatedAt = now;
+        return mediaAsset;
+    }
+
+    private async Task RetireConversationAvatarAsync(
+        Guid mediaAssetId,
+        Guid conversationId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var mediaAsset = await context.MediaAssets
+            .FirstOrDefaultAsync(x => x.Id == mediaAssetId, cancellationToken);
+
+        if (mediaAsset is null ||
+            mediaAsset.Scope != MediaScope.Avatar ||
+            mediaAsset.LinkedEntityType != nameof(Conversation) ||
+            mediaAsset.LinkedEntityId != conversationId)
+        {
+            return;
+        }
+
+        mediaAsset.LinkedEntityType = null;
+        mediaAsset.LinkedEntityId = null;
+        mediaAsset.Status = MediaStatus.Deleted;
+        mediaAsset.DeletedAt = now;
+        mediaAsset.UpdatedAt = now;
+    }
+
+    public async Task<SendChatMessageResponse> DeleteMessageAsync(Guid currentUserId, Guid conversationId, Guid messageId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureActiveParticipant(currentUserId, conversation);
+
+        var message = await context.ChatMessages
+            .Include(x => x.Sender)
+            .FirstOrDefaultAsync(x => x.Id == messageId && x.ConversationId == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_MESSAGE_NOT_FOUND", "Không tìm thấy tin nhắn.");
+
+        if (message.SenderId != currentUserId)
+            throw new ForbiddenException("CHAT_DELETE_FORBIDDEN", "Bạn chỉ có thể xóa tin nhắn của chính mình.");
+
+        if (message.DeletedAt != null)
+            throw new BadRequestException("CHAT_MESSAGE_ALREADY_DELETED", "Tin nhắn đã bị xóa từ trước.");
+
+        var now = DateTimeOffset.UtcNow;
+        message.DeletedAt = now;
+        await RetireMessageMediaAssetAsync(message, now, cancellationToken);
+
+        var latestMessage = await context.ChatMessages
+            .Where(x => x.ConversationId == conversationId && x.Id != messageId)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latestMessage == null)
+        {
+            conversation.LastMessagePreview = "Tin nhắn đã bị xóa";
+            conversation.LastMessageAt = now;
+        }
+        else if (latestMessage.CreatedAt < message.CreatedAt)
+        {
+            conversation.LastMessagePreview = latestMessage.DeletedAt != null ? "Tin nhắn đã bị xóa" : BuildPreview(latestMessage.MessageType, latestMessage.Content);
+        }
+
+        conversation.UpdatedAt = now;
+
+        await context.SaveChangesAsync(cancellationToken);
+
+        var recipientUserIds = conversation.Participants
+            .Where(x => x.LeftAt == null && x.UserId != currentUserId)
+            .Select(x => x.UserId)
+            .ToList();
+
+        return new SendChatMessageResponse
+        {
+            Message = MapMessage(message, currentUserId),
+            Conversation = MapConversation(conversation, currentUserId),
+            RecipientUserIds = recipientUserIds
+        };
+    }
+
+    // ─── Implementations for new IChatService methods ───────────────────
+
+    public async Task<List<ConversationResponse>> GetRecentConversationsAsync(Guid currentUserId, string? box, int take, int skip, CancellationToken cancellationToken = default)
+    {
+        var status = box?.ToLower() == "pending"
+            ? ConversationParticipantInboxStatus.Pending
+            : ConversationParticipantInboxStatus.Main;
+
+        var conversations = await BaseConversationQuery()
+            .Where(x => x.Participants.Any(p => p.UserId == currentUserId && p.LeftAt == null && p.InboxStatus == status) &&
+                (x.LastMessageAt != null || x.Type == ConversationType.Group))
+            .OrderByDescending(x => x.LastMessageAt ?? x.UpdatedAt)
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        return conversations.Select(x => MapConversation(x, currentUserId)).ToList();
+    }
+
+    public async Task<ChatCountsResponse> GetConversationCountsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var mainUnreadCount = await context.ConversationParticipants
+            .Where(x => x.UserId == userId && x.LeftAt == null && x.InboxStatus == ConversationParticipantInboxStatus.Main)
+            .SumAsync(x => x.UnreadCount, cancellationToken);
+
+        var pendingCount = await context.ConversationParticipants
+            .Where(x => x.UserId == userId && x.LeftAt == null && x.InboxStatus == ConversationParticipantInboxStatus.Pending)
+            .CountAsync(cancellationToken);
+
+        return new ChatCountsResponse
+        {
+            MainUnreadCount = mainUnreadCount,
+            PendingCount = pendingCount
+        };
+    }
+
+    public async Task<ConversationResponse> GetConversationResponseForUserAsync(Guid conversationId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var conv = await LoadConversationAsync(conversationId, cancellationToken);
+        return MapConversation(conv, userId);
+    }
+
+    public async Task<ConversationResponse> CreateDirectConversationByRoomingHouseAsync(Guid currentUserId, Guid roomingHouseId, CancellationToken cancellationToken = default)
+    {
+        var roomingHouse = await context.RoomingHouses
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == roomingHouseId && x.DeletedAt == null, cancellationToken)
+            ?? throw new NotFoundException("ROOMING_HOUSE_NOT_FOUND", "Không tìm thấy khu trọ.");
+
+        if (roomingHouse.ApprovalStatus != RoomingHouseApprovalStatus.Approved ||
+            roomingHouse.VisibilityStatus != RoomingHouseVisibilityStatus.Visible)
+        {
+            throw new BadRequestException("ROOMING_HOUSE_NOT_AVAILABLE", "Khu trọ hiện tại không công khai.");
+        }
+
+        if (roomingHouse.LandlordUserId == currentUserId)
+        {
+            throw new BadRequestException("CHAT_SELF_CHAT", "Không thể tạo cuộc trò chuyện với chính mình.");
+        }
+
+        return await CreateDirectConversationAsync(currentUserId, new CreateDirectConversationRequest
+        {
+            OtherUserId = roomingHouse.LandlordUserId
+        }, cancellationToken);
+    }
+
+    public async Task<ConversationResponse> ContactLandlordAsync(Guid tenantUserId, Guid roomingHouseId, string initialMessage, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(initialMessage))
+            throw new BadRequestException("CHAT_EMPTY_MESSAGE", "Lời nhắn không được để trống.");
+
+        var roomingHouse = await context.RoomingHouses
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == roomingHouseId && x.DeletedAt == null, cancellationToken)
+            ?? throw new NotFoundException("ROOMING_HOUSE_NOT_FOUND", "Không tìm thấy khu trọ.");
+
+        if (roomingHouse.ApprovalStatus != RoomingHouseApprovalStatus.Approved)
+            throw new BadRequestException("CHAT_HOUSE_NOT_APPROVED", "Khu trọ chưa được phê duyệt.");
+
+        if (roomingHouse.VisibilityStatus != RoomingHouseVisibilityStatus.Visible)
+            throw new BadRequestException("CHAT_HOUSE_HIDDEN", "Khu trọ đã bị ẩn.");
+
+        if (roomingHouse.LandlordUserId == tenantUserId)
+            throw new BadRequestException("CHAT_SELF_CONTACT", "Không thể tự gửi tin nhắn liên hệ cho khu trọ của chính mình.");
+
+        var landlordUserId = roomingHouse.LandlordUserId;
+        var (userAId, userBId) = NormalizePair(tenantUserId, landlordUserId);
+
+        var existing = await BaseConversationQuery()
+            .FirstOrDefaultAsync(x => x.Type == ConversationType.Direct && x.DirectUserAId == userAId && x.DirectUserBId == userBId, cancellationToken);
+
+        var now = DateTimeOffset.UtcNow;
+        Conversation conversation;
+
+        if (existing is not null)
+        {
+            conversation = existing;
+        }
+        else
+        {
+            conversation = new Conversation
+            {
+                Id = Guid.NewGuid(),
+                Type = ConversationType.Direct,
+                DirectUserAId = userAId,
+                DirectUserBId = userBId,
+                CreatedByUserId = tenantUserId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            context.Conversations.Add(conversation);
+        }
+
+        conversation.RoomingHouseId = roomingHouseId;
+
+        // Tenant participant
+        var tenantPart = conversation.Participants.FirstOrDefault(p => p.UserId == tenantUserId);
+        if (tenantPart == null)
+        {
+            tenantPart = new ConversationParticipant
+            {
+                ConversationId = conversation.Id,
+                UserId = tenantUserId,
+                Role = ConversationParticipantRole.Member,
+                Source = ConversationParticipantSource.Manual,
+                AddedByUserId = tenantUserId,
+                JoinedAt = now,
+                InboxStatus = ConversationParticipantInboxStatus.Main
+            };
+            conversation.Participants.Add(tenantPart);
+        }
+        else
+        {
+            tenantPart.LeftAt = null;
+            tenantPart.InboxStatus = ConversationParticipantInboxStatus.Main;
+        }
+
+        // Landlord participant
+        var landlordPart = conversation.Participants.FirstOrDefault(p => p.UserId == landlordUserId);
+        if (landlordPart == null)
+        {
+            landlordPart = new ConversationParticipant
+            {
+                ConversationId = conversation.Id,
+                UserId = landlordUserId,
+                Role = ConversationParticipantRole.Member,
+                Source = ConversationParticipantSource.Manual,
+                AddedByUserId = tenantUserId,
+                JoinedAt = now,
+                InboxStatus = existing is null ? ConversationParticipantInboxStatus.Pending : ConversationParticipantInboxStatus.Main
+            };
+            conversation.Participants.Add(landlordPart);
+        }
+        else
+        {
+            landlordPart.LeftAt = null;
+            if (existing is null || landlordPart.InboxStatus == ConversationParticipantInboxStatus.Rejected)
+            {
+                landlordPart.InboxStatus = ConversationParticipantInboxStatus.Pending;
+                landlordPart.InboxStatusUpdatedAt = now;
+                landlordPart.InboxStatusUpdatedByUserId = tenantUserId;
+            }
+        }
+
+        var message = new ChatMessage
+        {
+            Id = Guid.NewGuid(),
+            ConversationId = conversation.Id,
+            SenderId = tenantUserId,
+            MessageType = ChatMessageType.Text,
+            Content = initialMessage,
+            CreatedAt = now
+        };
+        context.ChatMessages.Add(message);
+
+        conversation.LastMessageAt = now;
+        conversation.LastMessagePreview = initialMessage;
+        conversation.UpdatedAt = now;
+        landlordPart.UnreadCount++;
+
+        await context.SaveChangesAsync(cancellationToken);
+
+        var refreshed = await LoadConversationAsync(conversation.Id, cancellationToken);
+        return MapConversation(refreshed, tenantUserId);
+    }
+
+    public async Task<List<ChatUserResponse>> GetActiveTenantsByRoomingHouseAsync(Guid landlordUserId, Guid roomingHouseId, CancellationToken cancellationToken = default)
+    {
+        await EnsureLandlordAsync(landlordUserId, cancellationToken);
+
+        var roomingHouse = await context.RoomingHouses
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == roomingHouseId && x.DeletedAt == null, cancellationToken)
+            ?? throw new NotFoundException("ROOMING_HOUSE_NOT_FOUND", "Không tìm thấy khu trọ.");
+
+        if (roomingHouse.LandlordUserId != landlordUserId)
+        {
+            throw new ForbiddenException("CHAT_LANDLORD_REQUIRED", "Không có quyền truy cập khu trọ này.");
+        }
+
+        var activeContracts = await context.RentalContracts
+            .AsNoTracking()
+            .Include(x => x.Room)
+            .Include(x => x.MainTenantUser).ThenInclude(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Include(x => x.Occupants).ThenInclude(x => x.User).ThenInclude(x => x!.UserRoles).ThenInclude(x => x.Role)
+            .Where(x => x.DeletedAt == null &&
+                        x.Room.RoomingHouseId == roomingHouseId &&
+                        x.Status == RentalContractStatus.Active)
+            .ToListAsync(cancellationToken);
+
+        var users = new Dictionary<Guid, ChatUserResponse>();
+        foreach (var contract in activeContracts)
+        {
+            if (contract.MainTenantUser != null && contract.MainTenantUserId != landlordUserId)
+            {
+                AddQuickContact(users, contract.MainTenantUser, $"Phòng {contract.Room.RoomNumber}");
+            }
+            foreach (var occupant in contract.Occupants)
+            {
+                if (occupant.User != null && occupant.UserId.HasValue && occupant.UserId.Value != landlordUserId)
+                {
+                    AddQuickContact(users, occupant.User, $"Phòng {contract.Room.RoomNumber}");
+                }
+            }
+        }
+
+        return users.Values.OrderBy(x => x.DisplayName).ToList();
+    }
+
+    public async Task<List<ChatUserResponse>> GetEligibleMembersAsync(Guid currentUserId, Guid conversationId, Guid? roomingHouseId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+        EnsureActiveParticipant(currentUserId, conversation);
+
+        var targetHouseId = roomingHouseId ?? conversation.RoomingHouseId;
+        List<ChatUserResponse> candidateUsers;
+
+        if (targetHouseId.HasValue)
+        {
+            candidateUsers = await GetUsersInRoomingHouseAsync(targetHouseId.Value, currentUserId, cancellationToken);
+        }
+        else
+        {
+            var currentUser = await context.Users
+                .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+                .FirstOrDefaultAsync(x => x.Id == currentUserId && x.DeletedAt == null, cancellationToken)
+                ?? throw new NotFoundException("CHAT_USER_NOT_FOUND", "Không tìm thấy người dùng hiện tại.");
+
+            if (HasRole(currentUser, RoleName.Landlord))
+            {
+                candidateUsers = await GetLandlordQuickContactsAsync(currentUserId, cancellationToken);
+            }
+            else
+            {
+                var landlords = await context.RoomingHouses
+                    .AsNoTracking()
+                    .Include(x => x.Landlord).ThenInclude(x => x.UserRoles).ThenInclude(x => x.Role)
+                    .Where(x => x.LandlordUserId != currentUserId &&
+                                x.Landlord.DeletedAt == null &&
+                                x.Landlord.Status == UserStatus.Active)
+                    .Select(x => x.Landlord)
+                    .Distinct()
+                    .ToListAsync(cancellationToken);
+
+                candidateUsers = landlords.Select(x => MapChatUser(x, "Chủ trọ")).ToList();
+            }
+        }
+
+        var existingUserIds = conversation.Participants.Where(x => x.LeftAt == null).Select(x => x.UserId).ToHashSet();
+        return candidateUsers.Where(x => !existingUserIds.Contains(x.UserId)).ToList();
+    }
+
+    public async Task<List<ChatRoomingHouseFilterResponse>> GetFilterRoomingHousesAsync(Guid currentUserId, CancellationToken cancellationToken = default)
+    {
+        var currentUser = await context.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+            .FirstOrDefaultAsync(x => x.Id == currentUserId && x.DeletedAt == null, cancellationToken)
+            ?? throw new NotFoundException("CHAT_USER_NOT_FOUND", "Không tìm thấy người dùng.");
+
+        if (HasRole(currentUser, RoleName.Landlord))
+        {
+            return await context.RoomingHouses
+                .AsNoTracking()
+                .Where(x => x.LandlordUserId == currentUserId && x.DeletedAt == null)
+                .OrderBy(x => x.Name)
+                .Select(x => new ChatRoomingHouseFilterResponse
+                {
+                    Id = x.Id,
+                    Name = x.Name,
+                    Address = x.AddressDisplay ?? string.Empty
+                })
+                .ToListAsync(cancellationToken);
+        }
+
+        return await context.RentalContracts
+            .AsNoTracking()
+            .Include(x => x.Room).ThenInclude(x => x.RoomingHouse)
+            .Where(x => x.DeletedAt == null &&
+                        x.Status == RentalContractStatus.Active &&
+                        (x.MainTenantUserId == currentUserId ||
+                         x.Occupants.Any(co => co.UserId == currentUserId)))
+            .Select(x => x.Room.RoomingHouse)
+            .Where(x => x != null && x.DeletedAt == null)
+            .Distinct()
+            .OrderBy(x => x!.Name)
+            .Select(x => new ChatRoomingHouseFilterResponse
+            {
+                Id = x!.Id,
+                Name = x.Name,
+                Address = x.AddressDisplay ?? string.Empty
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<ConversationResponse> UpdateParticipantRoleAsync(Guid currentUserId, Guid conversationId, Guid targetUserId, ConversationParticipantRole role, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+        EnsureOwner(currentUserId, conversation);
+
+        if (role is not ConversationParticipantRole.Owner and not ConversationParticipantRole.Member)
+        {
+            throw new BadRequestException("CHAT_ROLE_INVALID", "Vai trò nhóm không hợp lệ.");
+        }
+
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == targetUserId && x.LeftAt == null)
+            ?? throw new NotFoundException("CHAT_PARTICIPANT_NOT_FOUND", "Thành viên không tồn tại trong nhóm.");
+
+        var activeOwnerCount = conversation.Participants.Count(x => x.LeftAt == null && x.Role == ConversationParticipantRole.Owner);
+        if (participant.Role == ConversationParticipantRole.Owner &&
+            role == ConversationParticipantRole.Member &&
+            activeOwnerCount <= 1)
+        {
+            throw new BadRequestException(
+                "CHAT_ROLE_LAST_OWNER_INVALID",
+                "Nhóm phải có ít nhất một trưởng nhóm.");
+        }
+
+        participant.Role = role;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<ConversationResponse> ClearConversationHistoryAsync(Guid currentUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == currentUserId)
+            ?? throw new NotFoundException("CHAT_PARTICIPANT_NOT_FOUND", "Bạn không tham gia cuộc trò chuyện này.");
+
+        var now = DateTimeOffset.UtcNow;
+        participant.LeftAt = now;
+        participant.JoinedAt = now;
+        participant.UnreadCount = 0;
+
+        await context.SaveChangesAsync(cancellationToken);
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<List<ConversationJoinRequestResponse>> GetJoinRequestsAsync(Guid currentUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+        EnsureAdminOrOwner(currentUserId, conversation);
+
+        var requests = await context.ConversationJoinRequests
+            .AsNoTracking()
+            .Include(x => x.RequesterUser)
+            .Include(x => x.ReviewedByUser)
+            .Where(x => x.ConversationId == conversationId && x.Status == ConversationJoinRequestStatus.Pending)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return requests.Select(x => new ConversationJoinRequestResponse
+        {
+            Id = x.Id,
+            ConversationId = x.ConversationId,
+            RequesterUserId = x.RequesterUserId,
+            RequesterDisplayName = x.RequesterUser.DisplayName,
+            RequesterEmail = x.RequesterUser.Email,
+            RequesterAvatarUrl = x.RequesterUser.AvatarUrl,
+            Status = x.Status.ToString(),
+            CreatedAt = x.CreatedAt,
+            ReviewedByUserId = x.ReviewedByUserId,
+            ReviewedByDisplayName = x.ReviewedByUser?.DisplayName,
+            ReviewedAt = x.ReviewedAt
+        }).ToList();
+    }
+
+    public async Task<ConversationResponse> CreateJoinRequestAsync(Guid currentUserId, Guid conversationId, Guid? targetUserId = null, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+
+        var requestUserId = targetUserId ?? currentUserId;
+
+        var existingParticipant = conversation.Participants.FirstOrDefault(x => x.UserId == requestUserId && x.LeftAt == null);
+        if (existingParticipant != null)
+            throw new BadRequestException("CHAT_ALREADY_MEMBER", "Người dùng đã là thành viên của nhóm chat này.");
+
+        if (!conversation.RequiresJoinApproval)
+            throw new BadRequestException("CHAT_APPROVAL_NOT_REQUIRED", "Nhóm không yêu cầu duyệt thành viên, bạn có thể được thêm thẳng.");
+
+        var callerParticipant = conversation.Participants.FirstOrDefault(x => x.UserId == currentUserId && x.LeftAt == null);
+        if (callerParticipant == null && requestUserId != currentUserId)
+        {
+            throw new ForbiddenException("CHAT_FORBIDDEN", "Bạn không có quyền thực hiện thao tác này.");
+        }
+
+        var hasPending = await context.ConversationJoinRequests
+            .AnyAsync(x => x.ConversationId == conversationId && x.RequesterUserId == requestUserId && x.Status == ConversationJoinRequestStatus.Pending, cancellationToken);
+
+        if (hasPending)
+            throw new BadRequestException("CHAT_REQUEST_PENDING", "Đã có yêu cầu tham gia nhóm chat này đang chờ duyệt.");
+
+        var request = new ConversationJoinRequest
+        {
+            Id = Guid.NewGuid(),
+            ConversationId = conversationId,
+            RequesterUserId = requestUserId,
+            Status = ConversationJoinRequestStatus.Pending,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        context.ConversationJoinRequests.Add(request);
+        await context.SaveChangesAsync(cancellationToken);
+
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<ConversationResponse> ApproveJoinRequestAsync(Guid currentUserId, Guid conversationId, Guid requestId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+        EnsureAdminOrOwner(currentUserId, conversation);
+
+        var request = await context.ConversationJoinRequests
+            .FirstOrDefaultAsync(x => x.Id == requestId && x.ConversationId == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_REQUEST_NOT_FOUND", "Không tìm thấy yêu cầu phê duyệt.");
+
+        if (request.Status != ConversationJoinRequestStatus.Pending)
+            throw new BadRequestException("CHAT_REQUEST_NOT_PENDING", "Yêu cầu này đã được xử lý.");
+
+        var now = DateTimeOffset.UtcNow;
+        request.Status = ConversationJoinRequestStatus.Approved;
+        request.ReviewedByUserId = currentUserId;
+        request.ReviewedAt = now;
+
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == request.RequesterUserId);
+        if (participant is null)
+        {
+            conversation.Participants.Add(CreateParticipant(request.RequesterUserId, ConversationParticipantRole.Member, ConversationParticipantSource.Manual, currentUserId, now.AddSeconds(-5)));
+        }
+        else
+        {
+            participant.LeftAt = null;
+            participant.JoinedAt = now.AddSeconds(-5);
+            participant.AddedByUserId = currentUserId;
+            participant.Source = ConversationParticipantSource.Manual;
+        }
+
+        conversation.UpdatedAt = now;
+        await context.SaveChangesAsync(cancellationToken);
+
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task RejectJoinRequestAsync(Guid currentUserId, Guid conversationId, Guid requestId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+        EnsureAdminOrOwner(currentUserId, conversation);
+
+        var request = await context.ConversationJoinRequests
+            .FirstOrDefaultAsync(x => x.Id == requestId && x.ConversationId == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_REQUEST_NOT_FOUND", "Không tìm thấy yêu cầu phê duyệt.");
+
+        if (request.Status != ConversationJoinRequestStatus.Pending)
+            throw new BadRequestException("CHAT_REQUEST_NOT_PENDING", "Yêu cầu này đã được xử lý.");
+
+        request.Status = ConversationJoinRequestStatus.Rejected;
+        request.ReviewedByUserId = currentUserId;
+        request.ReviewedAt = DateTimeOffset.UtcNow;
+
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<ConversationResponse> UpdateApprovalSettingsAsync(Guid currentUserId, Guid conversationId, bool requiresApproval, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureGroup(conversation);
+        EnsureAdminOrOwner(currentUserId, conversation);
+
+        conversation.RequiresJoinApproval = requiresApproval;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+
+        return MapConversation(conversation, currentUserId);
+    }
+
+    public async Task<(ConversationResponse Conversation, ChatMessageResponse? SystemMessage)> AcceptContactRequestAsync(Guid landlordUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await context.Conversations
+            .Include(x => x.Participants)
+            .FirstOrDefaultAsync(x => x.Id == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_CONVERSATION_NOT_FOUND", "Không tìm thấy cuộc trò chuyện.");
+
+        var landlordPart = conversation.Participants.FirstOrDefault(p => p.UserId == landlordUserId && p.LeftAt == null)
+            ?? throw new ForbiddenException("CHAT_NOT_PARTICIPANT", "Bạn không tham gia cuộc trò chuyện này.");
+
+        ChatMessage? systemMsg = null;
+
+        if (landlordPart.InboxStatus == ConversationParticipantInboxStatus.Pending)
+        {
+            var now = DateTimeOffset.UtcNow;
+            landlordPart.InboxStatus = ConversationParticipantInboxStatus.Main;
+            landlordPart.InboxStatusUpdatedAt = now;
+            landlordPart.InboxStatusUpdatedByUserId = landlordUserId;
+
+            var landlordUser = await context.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == landlordUserId, cancellationToken)
+                ?? throw new NotFoundException("USER_NOT_FOUND", "Không tìm thấy người dùng.");
+
+            systemMsg = new ChatMessage
+            {
+                Id = Guid.NewGuid(),
+                ConversationId = conversation.Id,
+                SenderId = landlordUserId,
+                MessageType = ChatMessageType.System,
+                Content = $"{landlordUser.DisplayName} đã chấp nhận yêu cầu nhắn tin",
+                CreatedAt = now
+            };
+            context.ChatMessages.Add(systemMsg);
+
+            conversation.LastMessageAt = now;
+            conversation.LastMessagePreview = systemMsg.Content;
+            conversation.UpdatedAt = now;
+
+            await context.SaveChangesAsync(cancellationToken);
+        }
+
+        var refreshed = await LoadConversationAsync(conversation.Id, cancellationToken);
+        var mappedConv = MapConversation(refreshed, landlordUserId);
+        var mappedMsg = systemMsg != null ? MapMessage(systemMsg, landlordUserId) : null;
+
+        return (mappedConv, mappedMsg);
+    }
+
+    public async Task<ConversationResponse> RejectContactRequestAsync(Guid landlordUserId, Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await context.Conversations
+            .Include(x => x.Participants)
+            .FirstOrDefaultAsync(x => x.Id == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_CONVERSATION_NOT_FOUND", "Không tìm thấy cuộc trò chuyện.");
+
+        var landlordPart = conversation.Participants.FirstOrDefault(p => p.UserId == landlordUserId && p.LeftAt == null)
+            ?? throw new ForbiddenException("CHAT_NOT_PARTICIPANT", "Bạn không tham gia cuộc trò chuyện này.");
+
+        var now = DateTimeOffset.UtcNow;
+        landlordPart.InboxStatus = ConversationParticipantInboxStatus.Rejected;
+        landlordPart.InboxStatusUpdatedAt = now;
+        landlordPart.InboxStatusUpdatedByUserId = landlordUserId;
+
+        await context.SaveChangesAsync(cancellationToken);
+
+        var refreshed = await LoadConversationAsync(conversation.Id, cancellationToken);
+        return MapConversation(refreshed, landlordUserId);
+    }
+
+    public async Task<ChatMessageResponse> UnsendMessageAsync(Guid currentUserId, Guid conversationId, Guid messageId, CancellationToken cancellationToken = default)
+    {
+        var message = await context.ChatMessages
+            .Include(x => x.Conversation).ThenInclude(c => c.Participants)
+            .Include(x => x.Sender)
+            .FirstOrDefaultAsync(x => x.Id == messageId && x.ConversationId == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_MESSAGE_NOT_FOUND", "Không tìm thấy tin nhắn.");
+
+        if (message.SenderId != currentUserId)
+            throw new ForbiddenException("CHAT_UNSEND_FORBIDDEN", "Bạn chỉ có thể gỡ tin nhắn của chính mình.");
+
+        if (message.DeletedAt != null)
+            return MapMessage(message, currentUserId);
+
+        var now = DateTimeOffset.UtcNow;
+        message.DeletedAt = now;
+        message.Content = "Tin nhắn đã bị thu hồi";
+        await RetireMessageMediaAssetAsync(message, now, cancellationToken);
+
+        var conversation = message.Conversation;
+        if (conversation.LastMessagePreview != null)
+        {
+            conversation.LastMessagePreview = "Tin nhắn đã bị thu hồi";
+            conversation.UpdatedAt = now;
+        }
+
+        await context.SaveChangesAsync(cancellationToken);
+        return MapMessage(message, currentUserId);
+    }
+
+    private async Task RetireMessageMediaAssetAsync(
+        ChatMessage message,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (message.MediaAssetId.HasValue)
+        {
+            var mediaAsset = await context.MediaAssets
+                .FirstOrDefaultAsync(x => x.Id == message.MediaAssetId.Value, cancellationToken);
+
+            if (mediaAsset is not null)
+            {
+                mediaAsset.Status = MediaStatus.Deleted;
+                mediaAsset.LinkedEntityType = null;
+                mediaAsset.LinkedEntityId = null;
+                mediaAsset.DeletedAt = now;
+                mediaAsset.UpdatedAt = now;
+            }
+        }
+
+        message.MediaAssetId = null;
+        message.ImageUrl = null;
+        message.FileUrl = null;
+    }
+
+    public async Task<ChatMessageResponse> GetFileMessageAsync(Guid currentUserId, Guid conversationId, Guid messageId, CancellationToken cancellationToken = default)
+    {
+        var conversation = await LoadConversationAsync(conversationId, cancellationToken);
+        EnsureParticipant(currentUserId, conversation);
+
+        var message = await context.ChatMessages
+            .AsNoTracking()
+            .Include(x => x.Sender)
+            .FirstOrDefaultAsync(x => x.Id == messageId && x.ConversationId == conversationId, cancellationToken)
+            ?? throw new NotFoundException("CHAT_MESSAGE_NOT_FOUND", "Không tìm thấy tin nhắn.");
+
+        if (message.MessageType != ChatMessageType.File)
+            throw new BadRequestException("CHAT_MESSAGE_NOT_FILE", "Tin nhắn này không phải là tệp đính kèm.");
+
+        if (message.DeletedAt != null)
+            throw new BadRequestException("CHAT_MESSAGE_DELETED", "Tin nhắn đã bị thu hồi.");
+
+        return MapMessage(message, currentUserId);
+    }
+
+    private async Task<List<ChatUserResponse>> GetUsersInRoomingHouseAsync(Guid roomingHouseId, Guid excludeUserId, CancellationToken cancellationToken)
+    {
+        var activeContracts = await context.RentalContracts
+            .AsNoTracking()
+            .Include(x => x.Room)
+            .Include(x => x.MainTenantUser).ThenInclude(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Include(x => x.Occupants).ThenInclude(x => x.User).ThenInclude(x => x!.UserRoles).ThenInclude(x => x.Role)
+            .Where(x => x.DeletedAt == null &&
+                        x.Room.RoomingHouseId == roomingHouseId &&
+                        x.Status == RentalContractStatus.Active)
+            .ToListAsync(cancellationToken);
+
+        var users = new Dictionary<Guid, ChatUserResponse>();
+        
+        var house = await context.RoomingHouses
+            .AsNoTracking()
+            .Include(x => x.Landlord).ThenInclude(x => x.UserRoles).ThenInclude(x => x.Role)
+            .FirstOrDefaultAsync(x => x.Id == roomingHouseId && x.DeletedAt == null, cancellationToken);
+        if (house?.Landlord != null && house.LandlordUserId != excludeUserId)
+        {
+            AddQuickContact(users, house.Landlord, "Chủ trọ");
+        }
+
+        foreach (var contract in activeContracts)
+        {
+            if (contract.MainTenantUser != null && contract.MainTenantUserId != excludeUserId && contract.MainTenantUserId != house?.LandlordUserId)
+            {
+                AddQuickContact(users, contract.MainTenantUser, $"Phòng {contract.Room.RoomNumber}");
+            }
+            foreach (var occupant in contract.Occupants)
+            {
+                if (occupant.User != null && occupant.UserId.HasValue && occupant.UserId.Value != excludeUserId && occupant.UserId.Value != house?.LandlordUserId)
+                {
+                    AddQuickContact(users, occupant.User, $"Phòng {contract.Room.RoomNumber}");
+                }
+            }
+        }
+
+        return users.Values.ToList();
+    }
+
+    private static void EnsureAdminOrOwner(Guid currentUserId, Conversation conversation)
+    {
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == currentUserId && x.LeftAt == null);
+        if (participant?.Role != ConversationParticipantRole.Owner)
+            throw new ForbiddenException("CHAT_OWNER_REQUIRED", "Chỉ trưởng nhóm mới có quyền thực hiện thao tác này.");
+    }
+
+    private static void EnsureOwnerOrAdmin(Guid currentUserId, Conversation conversation)
+    {
+        var participant = conversation.Participants.FirstOrDefault(x => x.UserId == currentUserId && x.LeftAt == null);
+        if (participant?.Role != ConversationParticipantRole.Owner)
+            throw new ForbiddenException("CHAT_OWNER_REQUIRED", "Chỉ trưởng nhóm mới có quyền thực hiện thao tác này.");
+    }
+
+    private static ConversationParticipant EnsureParticipant(Guid currentUserId, Conversation conversation)
+    {
+        return conversation.Participants.FirstOrDefault(x => x.UserId == currentUserId)
+            ?? throw new ForbiddenException("CHAT_FORBIDDEN", "Bạn không có quyền truy cập cuộc trò chuyện này.");
+    }
+
+    public async Task<int> GetUnreadMessageCountAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        return await context.ConversationParticipants
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && x.LeftAt == null)
+            .SumAsync(x => x.UnreadCount, cancellationToken);
+    }
+}

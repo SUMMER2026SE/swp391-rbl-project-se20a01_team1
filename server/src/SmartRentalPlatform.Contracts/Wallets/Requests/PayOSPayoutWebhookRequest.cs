@@ -12,6 +12,9 @@ public sealed record PayOSPayoutWebhookRequest
 
     [JsonPropertyName("data")]
     public PayOSPayoutWebhookData Data { get; init; } = new();
+
+    [JsonPropertyName("signature")]
+    public string? Signature { get; init; }
 }
 
 public sealed record PayOSPayoutWebhookData

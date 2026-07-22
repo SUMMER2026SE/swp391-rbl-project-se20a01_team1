@@ -5,7 +5,7 @@ import { ROUTE_PATHS } from '../../../app/router/routePaths';
 import { Alert } from '../../../shared/components/ui/Alert';
 import { Button } from '../../../shared/components/ui/Button';
 import { Toast } from '../../../shared/components/ui/Toast';
-import { toAssetUrl } from '../../../shared/api/assets';
+import { toPublicListingImageUrl } from '../../../shared/api/assets';
 import { getProvinces, getWardsByProvince } from '../../administrative/api';
 import type { Province, Ward } from '../../administrative/types';
 import {
@@ -18,9 +18,16 @@ import type { GuestRoomingHouseRecommendationRequest, RoomingHouseListingItem, R
 import SearchSuggestionBox from '../../rooming-houses/components/SearchSuggestionBox';
 import { LocationFilterPanel } from '../../rooming-houses/components/LocationFilterPanel';
 import RentalAiChatbot from '../../rooming-houses/components/RentalAiChatbot';
-import { saveRoomingHouseView, saveSearchBehavior, toGuestRecommendationRequest } from '../../rooming-houses/rentalBehaviorStorage';
+import FavoriteButton from '../../rooming-houses/components/FavoriteButton';
+import {
+  GUEST_RECOMMENDATION_CACHE_KEY,
+  saveRoomingHouseView,
+  saveSearchBehavior,
+  toGuestRecommendationRequest,
+} from '../../rooming-houses/rentalBehaviorStorage';
 import { saveRecentSearch } from '../../rooming-houses/searchRecentStorage';
 import { NotificationBell } from '../../notifications/components/NotificationBell';
+import { HomeHeader } from '../../../shared/components/layout/HomeHeader';
 import './MePage.css';
 
 type HeaderLocationMode = 'area' | 'nearby' | null;
@@ -37,6 +44,8 @@ type HomeListingItem = {
   maxAreaM2?: number | null;
   amenities?: string[];
   createdAt?: string;
+  averageRating?: number;
+  totalReviews?: number;
 };
 
 type HomeListingCategory = {
@@ -49,9 +58,9 @@ type HomeListingCategory = {
   compact?: boolean;
 };
 
-/** sessionStorage cache key for home page listing. */
-const LISTING_CACHE_KEY = 'srp_home_listing_cache';
-const RECOMMENDATION_CACHE_KEY = 'srp_home_ai_recommendation_cache';
+/** sessionStorage cache key for home page listing. Bump when the card payload changes. */
+const LISTING_CACHE_KEY = 'srp_home_listing_cache_v2';
+const PROVINCES_CACHE_KEY = 'srp_home_provinces_cache_v1';
 /** Cache TTL: 5 minutes. */
 const LISTING_CACHE_TTL = 5 * 60 * 1000;
 
@@ -65,6 +74,28 @@ const AFFORDABLE_MAX_RENT = 5_000_000;
 type ListingCacheEntry = {
   items: HomeListingItem[];
   timestamp: number;
+};
+
+type ProvincesCacheEntry = {
+  items: Province[];
+  timestamp: number;
+};
+
+type RecommendationDisplayMeta = {
+  personalized: boolean;
+  aiAssisted: boolean;
+  fallbackReason?: string | null;
+};
+
+type RecommendationCacheEntry = ListingCacheEntry & {
+  behaviorKey: string;
+  meta: RecommendationDisplayMeta;
+};
+
+const DEFAULT_RECOMMENDATION_META: RecommendationDisplayMeta = {
+  personalized: false,
+  aiAssisted: false,
+  fallbackReason: null,
 };
 
 export function MePage() {
@@ -82,14 +113,21 @@ export function MePage() {
   }, [location]);
 
   const [error, setError] = useState('');
-  const [homeListings, setHomeListings] = useState<HomeListingItem[]>([]);
+  const [homeListings, setHomeListings] = useState<HomeListingItem[]>(
+    () => readTimedCache<ListingCacheEntry>(LISTING_CACHE_KEY, LISTING_CACHE_TTL)?.items ?? []
+  );
   const [recommendedListings, setRecommendedListings] = useState<HomeListingItem[]>([]);
+  const [recommendationMeta, setRecommendationMeta] = useState<RecommendationDisplayMeta>(DEFAULT_RECOMMENDATION_META);
   const [searchQuery, setSearchQuery] = useState('');
-  const [loadingHouses, setLoadingHouses] = useState(false);
+  const [loadingHouses, setLoadingHouses] = useState(
+    () => !readTimedCache<ListingCacheEntry>(LISTING_CACHE_KEY, LISTING_CACHE_TTL)
+  );
   const [isCheckingLandlord, setIsCheckingLandlord] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [activeLocationMode, setActiveLocationMode] = useState<HeaderLocationMode>(null);
-  const [provinces, setProvinces] = useState<Province[]>([]);
+  const [provinces, setProvinces] = useState<Province[]>(
+    () => readTimedCache<ProvincesCacheEntry>(PROVINCES_CACHE_KEY, LISTING_CACHE_TTL)?.items ?? []
+  );
   const [wards, setWards] = useState<Ward[]>([]);
   const [localProvinceCode, setLocalProvinceCode] = useState('');
   const [localWardCode, setLocalWardCode] = useState('');
@@ -108,30 +146,20 @@ export function MePage() {
 
   useEffect(() => {
     async function loadHomeListings() {
-      setLoadingHouses(true);
-
-      // 1. Try sessionStorage cache first — instant return
-      try {
-        const cached = sessionStorage.getItem(LISTING_CACHE_KEY);
-        if (cached) {
-          const entry: ListingCacheEntry = JSON.parse(cached);
-          if (Date.now() - entry.timestamp < LISTING_CACHE_TTL) {
-            setHomeListings(entry.items);
-            setLoadingHouses(false);
-            return;
-          }
-        }
-      } catch {
-        // Corrupted cache — ignore and re-fetch
+      const cached = readTimedCache<ListingCacheEntry>(LISTING_CACHE_KEY, LISTING_CACHE_TTL);
+      if (cached) {
+        setHomeListings(cached.items);
+        setLoadingHouses(false);
+        return;
       }
 
-      // 2. Fetch from lightweight Select-projection endpoint
+      setLoadingHouses(true);
+
       try {
         const items = await getPublicRoomingHouseListing();
         const mapped = items.map(mapListingItemToHomeItem);
         setHomeListings(mapped);
 
-        // 3. Write to cache for back-navigation
         try {
           const entry: ListingCacheEntry = { items: mapped, timestamp: Date.now() };
           sessionStorage.setItem(LISTING_CACHE_KEY, JSON.stringify(entry));
@@ -150,12 +178,18 @@ export function MePage() {
 
   useEffect(() => {
     async function loadAiRecommendations() {
+      const personalizedRequest = toGuestRecommendationRequest(8);
+      const request = personalizedRequest ?? createDefaultRecommendationRequest();
+      const personalized = personalizedRequest != null;
+      const behaviorKey = buildRecommendationBehaviorKey(request);
+
       try {
-        const cached = sessionStorage.getItem(RECOMMENDATION_CACHE_KEY);
+        const cached = sessionStorage.getItem(GUEST_RECOMMENDATION_CACHE_KEY);
         if (cached) {
-          const entry: ListingCacheEntry = JSON.parse(cached);
-          if (Date.now() - entry.timestamp < LISTING_CACHE_TTL) {
+          const entry: RecommendationCacheEntry = JSON.parse(cached);
+          if (Date.now() - entry.timestamp < LISTING_CACHE_TTL && entry.behaviorKey === behaviorKey) {
             setRecommendedListings(entry.items);
+            setRecommendationMeta(entry.meta ?? DEFAULT_RECOMMENDATION_META);
             return;
           }
         }
@@ -164,21 +198,32 @@ export function MePage() {
       }
 
       try {
-        const request = toGuestRecommendationRequest(8) ?? createDefaultRecommendationRequest();
         const recommendation = await getGuestRoomingHouseRecommendations(request);
         const mapped = recommendation.items.map((item) =>
           mapSearchItemToHomeItem(item, recommendation.reasons[item.id])
         );
+        const meta: RecommendationDisplayMeta = {
+          personalized,
+          aiAssisted: recommendation.aiAssisted,
+          fallbackReason: recommendation.fallbackReason,
+        };
         setRecommendedListings(mapped);
+        setRecommendationMeta(meta);
 
         try {
-          const entry: ListingCacheEntry = { items: mapped, timestamp: Date.now() };
-          sessionStorage.setItem(RECOMMENDATION_CACHE_KEY, JSON.stringify(entry));
+          const entry: RecommendationCacheEntry = {
+            items: mapped,
+            timestamp: Date.now(),
+            behaviorKey,
+            meta,
+          };
+          sessionStorage.setItem(GUEST_RECOMMENDATION_CACHE_KEY, JSON.stringify(entry));
         } catch {
           // sessionStorage full — silently skip cache
         }
       } catch {
         setRecommendedListings([]);
+        setRecommendationMeta(DEFAULT_RECOMMENDATION_META);
       }
     }
 
@@ -187,8 +232,20 @@ export function MePage() {
 
   useEffect(() => {
     async function loadProvinces() {
+      const cached = readTimedCache<ProvincesCacheEntry>(PROVINCES_CACHE_KEY, LISTING_CACHE_TTL);
+      if (cached) {
+        setProvinces(cached.items);
+        return;
+      }
+
       try {
-        setProvinces(await getProvinces());
+        const items = await getProvinces();
+        setProvinces(items);
+        try {
+          sessionStorage.setItem(PROVINCES_CACHE_KEY, JSON.stringify({ items, timestamp: Date.now() }));
+        } catch {
+          // sessionStorage full — silently skip cache
+        }
       } catch {
         setError('Không thể tải danh sách tỉnh/thành phố.');
       }
@@ -250,10 +307,10 @@ export function MePage() {
     'Khu vực / Xung quanh';
   const listingCategories = useMemo(
     () => [
-      ...buildListingCategories(recommendedListings, true),
+      ...buildListingCategories(recommendedListings, true, recommendationMeta),
       ...buildListingCategories(homeListings, false),
     ],
-    [homeListings, recommendedListings]
+    [homeListings, recommendationMeta, recommendedListings]
   );
 
   async function handleLandlordRegister() {
@@ -376,163 +433,57 @@ export function MePage() {
     <div className="home-container">
       {toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage(null)} />}
 
-      {/* Header */}
-      <header className="home-header">
-        <div className="header-logo" onClick={() => navigate(ROUTE_PATHS.ME.ROOT)}>
-          <div className="logo-icon-container">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="logo-svg-icon">
-              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              <polyline points="9 22 9 12 15 12 15 22" />
-            </svg>
-          </div>
-          <span className="logo-text">Smart Rental</span>
-        </div>
-        <form className="home-header-search-form" onSubmit={handleSearchSubmit}>
-          <svg className="search-form-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-          <SearchSuggestionBox
-            placeholder="Tìm khu vực, trường, giá thuê..."
-            value={searchQuery}
-            onChange={setSearchQuery}
-            onSearch={handleSuggestionSearch}
-          />
-          <button type="submit" className="search-submit-btn">Tìm</button>
-        </form>
-        <div className="home-header-location">
-          <button
-            type="button"
-            className={`home-location-button ${activeLocationMode ? 'is-active' : ''}`}
-            onClick={() => setActiveLocationMode((current) => (current ? null : 'area'))}
-            aria-expanded={activeLocationMode != null}
-          >
-            <svg className="location-pin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-              <circle cx="12" cy="10" r="3" />
-            </svg>
-            <span className="location-btn-label">{locationButtonLabel}</span>
-            <svg className="location-chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
+      <HomeHeader
+        centerContent={
+          <>
+            <form className="home-header-search-form" onSubmit={handleSearchSubmit}>
+              <svg className="search-form-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <SearchSuggestionBox
+                placeholder="Tìm khu vực, trường, giá thuê..."
+                value={searchQuery}
+                onChange={setSearchQuery}
+                onSearch={handleSuggestionSearch}
+              />
+              <button type="submit" className="search-submit-btn">Tìm</button>
+            </form>
+            <div className="home-header-location">
+              <button
+                type="button"
+                className={`home-location-button ${activeLocationMode ? 'is-active' : ''}`}
+                onClick={() => setActiveLocationMode((current) => (current ? null : 'area'))}
+                aria-expanded={activeLocationMode != null}
+              >
+                <svg className="location-pin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+                <span className="location-btn-label">{locationButtonLabel}</span>
+                <svg className="location-chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
 
-          {activeLocationMode && (
-            <LocationFilterPanel
-              initialProvinceCode={localProvinceCode}
-              initialWardCode={localWardCode}
-              initialRadiusKm={nearbyRadiusKm}
-              initialAddress={nearbyAddress}
-              initialLatitude={centerLat}
-              initialLongitude={centerLng}
-              initialTab={activeLocationMode === 'nearby' ? 'nearby' : 'area'}
-              onClose={() => setActiveLocationMode(null)}
-              onApply={handleLocationApply}
-              onClear={handleLocationClear}
-            />
-          )}
-        </div>
-        <div className="header-auth" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          {currentUser ? (
-            <>
-              <div className="header-role-action">
-                {isAdmin ? (
-                  <Button type="button" className="admin-channel-btn" onClick={() => navigate(ROUTE_PATHS.ADMIN.ROOT)}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="btn-icon">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
-                    Duyệt hồ sơ
-                  </Button>
-                ) : isLandlord ? (
-                  <Button type="button" className="landlord-channel-btn" onClick={() => navigate(ROUTE_PATHS.LANDLORD.DASHBOARD)}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="btn-icon">
-                      <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                      <polyline points="9 22 9 12 15 12 15 22" />
-                    </svg>
-                    Kênh chủ trọ
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    className="landlord-register-btn"
-                    disabled={isCheckingLandlord}
-                    onClick={handleLandlordRegister}
-                  >
-                    {isCheckingLandlord ? 'Đang xử lý...' : 'Đăng ký làm chủ trọ'}
-                  </Button>
-                )}
-              </div>
-              <NotificationBell />
-              <div className="avatar-wrapper" ref={dropdownRef}>
-                <button className="avatar-btn" onClick={() => setShowDropdown(!showDropdown)}>
-                  {currentUser.avatarUrl && currentUser.avatarUrl.trim() !== '' ? (
-                    <img src={toAssetUrl(currentUser.avatarUrl)} alt="Avatar" className="avatar-image" />
-                  ) : (
-                    <span className="avatar-initials">{avatarInitials}</span>
-                  )}
-                  <span className="avatar-name">{currentUser.displayName}</span>
-                  <svg className="avatar-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </button>
-                {showDropdown && (
-                  <div className="avatar-dropdown">
-                    <div className="dropdown-info">
-                      <strong>{currentUser.displayName}</strong>
-                      <span>{currentUser.email}</span>
-                    </div>
-                    <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.PROFILE); }}>
-                      Chỉnh sửa thông tin
-                    </button>
-                    <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.SECURITY); }}>
-                      Bảo mật
-                    </button>
-                    <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.WALLET); }}>
-                      Nạp ví
-                    </button>
-                    <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.INVOICES); }}>
-                      Hóa đơn
-                    </button>
-                    <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.RENTAL_REQUESTS); }}>
-                      Yêu cầu thuê
-                    </button>
-                    <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.RENTAL_HISTORY); }}>
-                      Lịch sử thuê
-                    </button>
-                    <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.VIEWING_APPOINTMENTS); }}>
-                      Lịch xem phòng
-                    </button>
-                    <div className="dropdown-divider" />
-                    {isAdmin && (
-                      <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ADMIN.ROOT); }}>
-                        Duyệt hồ sơ
-                      </button>
-                    )}
-                    {isLandlord && (
-                      <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.LANDLORD.DASHBOARD); }}>
-                        Kênh chủ trọ
-                      </button>
-                    )}
-                    <div className="dropdown-divider" />
-                    <button className="dropdown-item dropdown-item--danger" onClick={() => { setShowDropdown(false); logout(); }}>
-                      Đăng xuất
-                    </button>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="auth-buttons">
-              <Button type="button" variant="secondary" onClick={() => navigate(ROUTE_PATHS.AUTH.LOGIN)}>
-                Đăng nhập
-              </Button>
-              <Button type="button" onClick={() => navigate(ROUTE_PATHS.AUTH.REGISTER)}>
-                Đăng ký
-              </Button>
+              {activeLocationMode && (
+                <LocationFilterPanel
+                  initialProvinceCode={localProvinceCode}
+                  initialWardCode={localWardCode}
+                  initialRadiusKm={nearbyRadiusKm}
+                  initialAddress={nearbyAddress}
+                  initialLatitude={centerLat}
+                  initialLongitude={centerLng}
+                  initialTab={activeLocationMode === 'nearby' ? 'nearby' : 'area'}
+                  onClose={() => setActiveLocationMode(null)}
+                  onApply={handleLocationApply}
+                  onClear={handleLocationClear}
+                />
+              )}
             </div>
-          )}
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <section className="home-listings-section">
         {error && <Alert type="error">{error}</Alert>}
@@ -582,7 +533,7 @@ export function MePage() {
                       house={house}
                       onOpen={() => {
                         saveRoomingHouseView(house.id);
-                        navigate(`/rooming-houses/${house.id}`);
+                        navigate(`/rooming-houses/${house.id}`, { state: { fromListing: ROUTE_PATHS.ME.ROOT } });
                       }}
                     />
                   ))}
@@ -612,13 +563,29 @@ function HomeListingCard({ house, onOpen }: { house: HomeListingItem; onOpen: ()
     : 'Liên hệ chủ';
 
   return (
-    <button className="home-listing-card" type="button" onClick={onOpen}>
+    <article
+      className="home-listing-card"
+      onClick={onOpen}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Xem chi tiết ${house.name}`}
+    >
       <div className="card-image-wrapper">
         {house.coverImageUrl ? (
-          <img alt={house.name} src={toAssetUrl(house.coverImageUrl)} className="card-image" />
+          <img
+            alt={house.name}
+            src={toPublicListingImageUrl(house.coverImageUrl)}
+            className="card-image"
+            loading="lazy"
+            decoding="async"
+          />
         ) : (
           <div className="home-listing-card__placeholder">Chưa có ảnh</div>
         )}
+        <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 2 }}>
+          <FavoriteButton roomingHouseId={house.id} />
+        </div>
       </div>
       <div className="card-content-wrapper">
         <h3 className="card-title">{house.name}</h3>
@@ -637,7 +604,7 @@ function HomeListingCard({ house, onOpen }: { house: HomeListingItem; onOpen: ()
             </svg>
             <span>{roomsText}</span>
           </span>
-          
+
           <span className="card-badge badge-orange">
             <svg className="badge-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.41 0l7.29-7.29a1 1 0 0 0 0-1.41L12 2z" />
@@ -669,9 +636,20 @@ function HomeListingCard({ house, onOpen }: { house: HomeListingItem; onOpen: ()
           </>
         )}
 
-
+        <hr className="card-divider" style={{ marginTop: '12px', marginBottom: '8px' }} />
+        <div className="card-rating-footer" style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '13px', color: '#64748b' }}>
+          <span style={{ fontWeight: 600, color: '#334155' }}>
+            {house.averageRating ? house.averageRating.toFixed(1) : '0.0'}/5
+          </span>
+          <svg style={{ width: '16px', height: '16px', color: '#fbbf24', fill: 'currentColor', marginLeft: '2px', marginRight: '4px' }} viewBox="0 0 20 20">
+            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+          </svg>
+          <span>
+            {house.totalReviews || 0} đánh giá
+          </span>
+        </div>
       </div>
-    </button>
+    </article>
   );
 }
 
@@ -744,6 +722,8 @@ function mapListingItemToHomeItem(item: RoomingHouseListingItem): HomeListingIte
     maxAreaM2: item.maxAreaM2,
     amenities: item.amenities.map((a) => a.name),
     createdAt: item.createdAt,
+    averageRating: item.averageRating,
+    totalReviews: item.totalReviews,
   };
 }
 
@@ -757,10 +737,12 @@ function mapSearchItemToHomeItem(item: RoomingHouseSearchItem, reason?: string):
     minMonthlyRent: item.minMonthlyRent,
     maxMonthlyRent: item.maxMonthlyRent,
     minAreaM2: item.minAreaM2,
-    maxAreaM2: item.maxAreaM2,
-    amenities: item.amenities.map((a) => a.name),
-    createdAt: item.createdAt,
+    maxAreaM2: (item as any).maxAreaM2,
+    amenities: (item as any).amenities?.map((a: any) => a.name) || [],
+    createdAt: (item as any).createdAt,
     reason,
+    averageRating: item.averageRating,
+    totalReviews: item.totalReviews,
   };
 }
 
@@ -775,22 +757,65 @@ function createDefaultRecommendationRequest(): GuestRoomingHouseRecommendationRe
   };
 }
 
-function buildListingCategories(items: HomeListingItem[], personalized: boolean): HomeListingCategory[] {
-  // Lọc bỏ những khu trọ chưa có ảnh bìa
-  const itemsWithImages = items.filter(item => item.coverImageUrl && item.coverImageUrl.trim() !== '');
+function buildRecommendationBehaviorKey(request: GuestRoomingHouseRecommendationRequest) {
+  return JSON.stringify({
+    recentQueries: request.recentQueries,
+    recentRoomingHouseIds: request.recentRoomingHouseIds,
+    clickedRoomingHouseIds: request.clickedRoomingHouseIds,
+    preferredAmenityIds: request.preferredAmenityIds,
+    preferredRoomAmenityIds: request.preferredRoomAmenityIds,
+    provinceCode: request.provinceCode ?? null,
+    wardCode: request.wardCode ?? null,
+    minPrice: request.minPrice ?? null,
+    maxPrice: request.maxPrice ?? null,
+    minAreaM2: request.minAreaM2 ?? null,
+    maxAreaM2: request.maxAreaM2 ?? null,
+    pageSize: request.pageSize,
+  });
+}
+
+function buildRecommendationCategoryCopy(meta: RecommendationDisplayMeta) {
+  if (!meta.personalized) {
+    return {
+      eyebrow: 'KHU TRỌ ĐỀ XUẤT',
+      title: 'Khu trọ đề xuất hôm nay',
+      description: 'Các khu trọ còn phòng, có thông tin tốt để bạn tham khảo nhanh.',
+    };
+  }
+
+  if (meta.aiAssisted) {
+    return {
+      eyebrow: 'GỢI Ý AI',
+      title: 'Gợi ý phù hợp với bạn',
+      description: 'Dựa trên thói quen tìm kiếm và sở thích gần đây của bạn, đề xuất bởi AI.',
+    };
+  }
+
+  return {
+    eyebrow: 'GỢI Ý PHÙ HỢP',
+    title: 'Gợi ý theo nhu cầu của bạn',
+    description: meta.fallbackReason || 'Dựa trên tìm kiếm, tiện ích và khu vực bạn quan tâm gần đây.',
+  };
+}
+
+function buildListingCategories(
+  items: HomeListingItem[],
+  personalized: boolean,
+  recommendationMeta: RecommendationDisplayMeta = DEFAULT_RECOMMENDATION_META
+): HomeListingCategory[] {
+  const displayItems = prioritizeListingsWithImages(items);
   const categories: HomeListingCategory[] = [];
   const now = Date.now();
+  const recommendationCopy = buildRecommendationCategoryCopy(recommendationMeta);
 
   // ── Category 1: Tất cả khu trọ ──────────────────────────────────
-  const primary = itemsWithImages.slice(0, personalized ? 8 : 6);
+  const primary = displayItems.slice(0, personalized ? 8 : 6);
   if (primary.length > 0) {
     categories.push({
       id: personalized ? 'personalized' : 'available',
-      eyebrow: personalized ? 'GỢI Ý AI' : 'KHU TRỌ CÔNG KHAI',
-      title: personalized ? 'Gợi ý phù hợp với bạn' : 'Khu trọ đang còn phòng',
-      description: personalized
-        ? 'Dựa trên thói quen tìm kiếm và sở thích của bạn, đề xuất bởi AI.'
-        : 'Danh sách các khu trọ còn phòng, thông tin minh bạch, cập nhật liên tục.',
+      eyebrow: personalized ? recommendationCopy.eyebrow : 'KHU TRỌ CÔNG KHAI',
+      title: personalized ? recommendationCopy.title : 'Khu trọ đang còn phòng',
+      description: personalized ? recommendationCopy.description : 'Danh sách các khu trọ còn phòng, thông tin minh bạch, cập nhật liên tục.',
       icon: (
         <svg className="category-eyebrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <rect x="4" y="2" width="16" height="20" rx="2" ry="2" />
@@ -805,7 +830,7 @@ function buildListingCategories(items: HomeListingItem[], personalized: boolean)
   }
 
   // ── Category 2: Khu trọ mới (created trong vòng 14 ngày) ────────
-  const newest = itemsWithImages
+  const newest = displayItems
     .filter((item) => {
       if (!item.createdAt) return false;
       const ageMs = now - new Date(item.createdAt).getTime();
@@ -825,12 +850,11 @@ function buildListingCategories(items: HomeListingItem[], personalized: boolean)
         </svg>
       ),
       items: newest,
-      compact: true,
     });
   }
 
   // ── Category 3: Còn nhiều phòng trống (availableRooms ≥ 5) ──────
-  const manyRooms = itemsWithImages
+  const manyRooms = displayItems
     .filter((item) => (item.availableRooms ?? 0) >= MANY_ROOMS_THRESHOLD)
     .sort((a, b) => (b.availableRooms ?? 0) - (a.availableRooms ?? 0))
     .slice(0, 4);
@@ -849,12 +873,11 @@ function buildListingCategories(items: HomeListingItem[], personalized: boolean)
         </svg>
       ),
       items: manyRooms,
-      compact: true,
     });
   }
 
   // ── Category 4: Giá thuê dễ tiếp cận (minMonthlyRent ≤ 5 triệu) ─
-  const affordable = itemsWithImages
+  const affordable = displayItems
     .filter((item) => item.minMonthlyRent != null && item.minMonthlyRent <= AFFORDABLE_MAX_RENT)
     .sort((a, b) => (a.minMonthlyRent ?? Number.MAX_SAFE_INTEGER) - (b.minMonthlyRent ?? Number.MAX_SAFE_INTEGER))
     .slice(0, 4);
@@ -871,11 +894,36 @@ function buildListingCategories(items: HomeListingItem[], personalized: boolean)
         </svg>
       ),
       items: affordable,
-      compact: true,
     });
   }
 
   return categories;
+}
+
+function prioritizeListingsWithImages(items: HomeListingItem[]) {
+  return [...items].sort((a, b) => Number(hasCoverImage(b)) - Number(hasCoverImage(a)));
+}
+
+function hasCoverImage(item: HomeListingItem) {
+  return Boolean(item.coverImageUrl?.trim());
+}
+
+function readTimedCache<T extends { timestamp: number }>(key: string, ttlMs: number): T | null {
+  try {
+    const cached = sessionStorage.getItem(key);
+    if (!cached) return null;
+
+    const entry: T = JSON.parse(cached);
+    if (!entry?.timestamp || Date.now() - entry.timestamp >= ttlMs) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+
+    return entry;
+  } catch {
+    sessionStorage.removeItem(key);
+    return null;
+  }
 }
 
 function formatListingSummary(house: HomeListingItem) {

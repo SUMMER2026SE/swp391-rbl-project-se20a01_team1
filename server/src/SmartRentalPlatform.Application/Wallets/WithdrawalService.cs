@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 using SmartRentalPlatform.Application.Common.Exceptions;
 using SmartRentalPlatform.Application.Common.Interfaces;
 using SmartRentalPlatform.Application.Wallets.Options;
@@ -16,6 +17,7 @@ public class WithdrawalService : IWithdrawalService
     private readonly IAppDbContext context;
     private readonly IWalletService walletService;
     private readonly IPayOSClient payosClient;
+    private readonly IWithdrawalWebhookService withdrawalWebhookService;
     private readonly IPaymentRowLockService rowLockService;
     private readonly WithdrawalOptions options;
 
@@ -23,12 +25,14 @@ public class WithdrawalService : IWithdrawalService
         IAppDbContext context,
         IWalletService walletService,
         IPayOSClient payosClient,
+        IWithdrawalWebhookService withdrawalWebhookService,
         IPaymentRowLockService rowLockService,
         IOptions<WithdrawalOptions> options)
     {
         this.context = context;
         this.walletService = walletService;
         this.payosClient = payosClient;
+        this.withdrawalWebhookService = withdrawalWebhookService;
         this.rowLockService = rowLockService;
         this.options = options.Value;
     }
@@ -45,6 +49,26 @@ public class WithdrawalService : IWithdrawalService
         if (amount <= 0)
         {
             throw new BadRequestException(ErrorCodes.ValidationError, "Withdrawal amount must be greater than zero.");
+        }
+
+        if (amount % 1 != 0)
+        {
+            throw new BadRequestException(ErrorCodes.ValidationError, "Withdrawal amount must be an integer value (VND).");
+        }
+
+        if (string.IsNullOrWhiteSpace(bankBin))
+        {
+            throw new BadRequestException(ErrorCodes.ValidationError, "Bank BIN is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(accountNumber))
+        {
+            throw new BadRequestException(ErrorCodes.ValidationError, "Account number is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(accountName))
+        {
+            throw new BadRequestException(ErrorCodes.ValidationError, "Account name is required.");
         }
 
         var totalDeduction = amount + options.FlatFee;
@@ -208,6 +232,18 @@ public class WithdrawalService : IWithdrawalService
             {
                 await successTx.RollbackAsync(cancellationToken);
             }
+
+            var immediateState = payosResult!.TransactionState ?? payosResult.ApprovalState;
+            if (IsTerminalPayoutState(immediateState))
+            {
+                await withdrawalWebhookService.ProcessWebhookAsync(
+                    withdrawalRequest.ProviderOrderCode,
+                    immediateState!,
+                    JsonSerializer.Serialize(payosResult),
+                    null,
+                    true,
+                    cancellationToken);
+            }
         }
 
         return withdrawalRequest;
@@ -247,5 +283,10 @@ public class WithdrawalService : IWithdrawalService
     private static string GenerateOrderCode()
     {
         return DateTimeOffset.UtcNow.ToString("yyMMddHHmmss") + Random.Shared.Next(100, 999);
+    }
+
+    private static bool IsTerminalPayoutState(string? status)
+    {
+        return status is "SUCCESS" or "SUCCEEDED" or "COMPLETED" or "FAILED" or "REJECTED" or "CANCELLED";
     }
 }

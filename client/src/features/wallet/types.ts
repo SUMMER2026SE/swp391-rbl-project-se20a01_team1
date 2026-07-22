@@ -29,7 +29,10 @@ export type WalletTransactionType =
   | 'DepositRefundDebit'
   | 'DepositRefundCredit'
   | 'DepositForfeitRelease'
-  | 'ManualAdjustment';
+  | 'ManualAdjustment'
+  | 'WalletWithdrawalReserved'
+  | 'WalletWithdrawalSucceeded'
+  | 'WalletWithdrawalRefund';
 
 export type WalletTransactionDirection = 'Debit' | 'Credit';
 export type WalletTransactionStatus = 'Succeeded' | 'Pending' | 'Failed' | 'Expired' | 'Cancelled';
@@ -90,7 +93,9 @@ export interface WalletTopUpResponse {
   gatewayResponseMessage?: string | null;
 }
 
-export interface WithdrawalRequest {
+export type WithdrawalStatus = 'PendingApproval' | 'Processing' | 'Succeeded' | 'Failed' | 'Rejected';
+
+export interface CreateWithdrawalRequest {
   amount: number;
   bankBin: string;
   accountNumber: string;
@@ -102,12 +107,12 @@ export interface WithdrawalRequestResponse {
   walletAccountId: string;
   amount: number;
   fee: number;
-  status: string;
+  status: WithdrawalStatus;
   providerOrderCode: string;
   bankBin: string;
   accountName: string;
   accountNumber: string;
-  description?: string;
+  description?: string | null;
   createdAt: string;
-  updatedAt?: string;
+  updatedAt: string;
 }

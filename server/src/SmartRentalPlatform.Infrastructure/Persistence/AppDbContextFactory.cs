@@ -27,10 +27,7 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
             LocalDockerConnectionString;
 
         var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();
-        optionsBuilder.UseNpgsql(connectionString, builder =>
-        {
-            builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-        });
+        optionsBuilder.UseNpgsql(connectionString);
 
         return new AppDbContext(optionsBuilder.Options);
     }

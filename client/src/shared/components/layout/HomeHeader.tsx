@@ -4,9 +4,11 @@ import { useAuth } from '../../../app/providers/AuthProvider';
 import { ROUTE_PATHS } from '../../../app/router/routePaths';
 import { Button } from '../ui/Button';
 import { Toast } from '../ui/Toast';
-import { toAssetUrl } from '../../api/assets';
+import { toAvatarImageUrl } from '../../api/assets';
 import { getMyRoomingHouseOnboarding } from '../../../features/rooming-houses/api';
 import { NotificationBell } from '../../../features/notifications/components/NotificationBell';
+import { FloatingChatContainer } from '../../../features/chat/components/FloatingChatContainer';
+import { MessageShortcut } from './MessageShortcut';
 import './HomeHeader.css';
 
 interface HomeHeaderProps {
@@ -119,11 +121,14 @@ export function HomeHeader({ centerContent }: HomeHeaderProps) {
 
         {currentUser ? (
           <>
+            <div className="home-header-message-action">
+              <MessageShortcut />
+            </div>
             <NotificationBell />
             <div className="avatar-wrapper" ref={dropdownRef}>
             <button className="avatar-btn" onClick={() => setShowDropdown(!showDropdown)}>
               {currentUser.avatarUrl && currentUser.avatarUrl.trim() !== '' ? (
-                <img src={toAssetUrl(currentUser.avatarUrl)} alt="Avatar" className="avatar-image" />
+                <img src={toAvatarImageUrl(currentUser)} alt="Avatar" className="avatar-image" />
               ) : (
                 <span className="avatar-initials">{avatarInitials}</span>
               )}
@@ -148,7 +153,10 @@ export function HomeHeader({ centerContent }: HomeHeaderProps) {
                   Quản lý bảo mật
                 </button>
                 <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.VIEWING_APPOINTMENTS); }}>
-                  Lịch hẹn xem phòng
+                  Lịch xem phòng
+                </button>
+                <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.FAVORITES); }}>
+                  Khu trọ yêu thích
                 </button>
                 <button className="dropdown-item" onClick={() => { setShowDropdown(false); navigate(ROUTE_PATHS.ACCOUNT.RENTAL_REQUESTS); }}>
                   Yêu cầu thuê phòng
@@ -186,6 +194,7 @@ export function HomeHeader({ centerContent }: HomeHeaderProps) {
         )}
       </div>
       {toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage(null)} />}
+      {currentUser && <FloatingChatContainer />}
     </header>
   );
 }

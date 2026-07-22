@@ -158,20 +158,12 @@ public class PayOSClient : IPayOSClient
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        PayOSPayoutResponse? parsed = null;
-        try 
-        {
-            parsed = JsonSerializer.Deserialize<PayOSPayoutResponse>(body, JsonOptions);
-        }
-        catch 
-        {
-        }
-
-        if (parsed == null && !response.IsSuccessStatusCode)
+        if (!response.IsSuccessStatusCode)
         {
             throw new InvalidOperationException($"PayOS create payout failed with HTTP {(int)response.StatusCode}. Response: {body}");
         }
 
+        var parsed = JsonSerializer.Deserialize<PayOSPayoutResponse>(body, JsonOptions);
         if (parsed is null)
         {
             throw new InvalidOperationException("PayOS create payout response was invalid.");

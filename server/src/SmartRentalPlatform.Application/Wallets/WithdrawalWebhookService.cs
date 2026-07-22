@@ -79,7 +79,7 @@ public class WithdrawalWebhookService : IWithdrawalWebhookService
 
             var totalDeduction = withdrawalRequest.Amount + withdrawalRequest.Fee;
 
-            if (status == "SUCCESS" || status == "SUCCEEDED")
+            if (status == "SUCCESS" || status == "SUCCEEDED" || status == "COMPLETED")
             {
                 withdrawalRequest.Status = WithdrawalStatus.Succeeded;
                 await walletService.DebitFromReservedAsync(
